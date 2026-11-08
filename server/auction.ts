@@ -76,7 +76,7 @@ export class Auction {
     for (const r of tutorial ? lineup.slice(0, 2) : lineup) {
       const plan = planFor(r, this.manifest, bag.tier);
       // The first bag teaches the payoff: two rivals who give up around half its value.
-      if (tutorial) plan.max = Math.min(plan.max, Math.floor((plan.estimate * 0.5) / 10) * 10);
+      if (tutorial) plan.max = Math.min(plan.max, Math.floor((publicEstimate(this.manifest, bag.tier) * 0.45) / 10) * 10);
       r.committed += plan.max;
       this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false });
     }

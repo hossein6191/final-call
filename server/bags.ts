@@ -32,6 +32,7 @@ export interface PublicBag {
   sealedTx: string | null;
   sealedBlock: number | null;
   status: string;
+  reservedFor: boolean;
   manifest?: ManifestSlot[];
 }
 
@@ -120,6 +121,7 @@ export function toPublic(r: BagRow, withManifest = false): PublicBag {
     sealedTx: r.sealed_tx,
     sealedBlock: r.sealed_block,
     status: r.status,
+    reservedFor: Boolean(r.reserved_for),
     manifest: withManifest ? JSON.parse(r.manifest) : undefined,
   };
 }

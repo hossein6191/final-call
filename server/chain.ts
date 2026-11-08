@@ -1,60 +1,36 @@
 // NEAR access for the server. Every signer gets its own queue so nonces never collide.
 // The House uses three function-call keys (House methods only); each rival has one key
 // limited to the player methods. No full-access key is ever loaded here.
-import { Account, FailoverRpcProvider, JsonRpcProvider, getTransactionLastResult, teraToGas, type KeyPairString } from 'near-api-js';
+import { Account, FailoverRpcProvider, JsonRpcProvider, type KeyPairString } from 'near-api-js';
+import { sendCall, type Sent } from '../shared/near-send.ts';
 import { cfg } from './config.ts';
 
 export const provider = new FailoverRpcProvider(cfg.rpcs.map((url) => new JsonRpcProvider({ url })));
 
 export async function view<T = any>(method: string, args: object = {}): Promise<T> {
-  return (await provider.callFunction({ contractId: cfg.contract, method, args })) as T;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return (await Promise.race([
+        provider.callFunction({ contractId: cfg.contract, method, args }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('view timeout')), 8000)),
+      ])) as T;
+    } catch (e) {
+      if (attempt >= 2 || /panicked/.test(String((e as Error).message))) throw e;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
 }
 
-export interface TxResult<T = unknown> {
-  hash: string;
-  value: T;
-  tgas: number;
-  events: { standard: string; event: string; data: any[] }[];
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function isTransient(e: unknown): boolean {
-  const m = String((e as Error)?.message ?? e);
-  return /nonce|timeout|timed out|TooManyRequests|429|fetch failed|ECONNRESET|503|502|Expired|InvalidNonce/i.test(m);
-}
+export type TxResult<T = unknown> = Sent<T>;
 
 export function panicMessage(e: unknown): string {
   const m = String((e as Error)?.message ?? e);
-  const hit = /Smart contract panicked: (.*?)(?:"|$)/.exec(m);
+  const hit = /Smart contract panicked: (.*?)(?:\\?"|$)/.exec(m);
   return hit ? hit[1] : m.slice(0, 200);
 }
 
-async function send<T>(acct: Account, methodName: string, args: object, tgas: number): Promise<TxResult<T>> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const r: any = await acct.callFunctionRaw({
-        contractId: cfg.contract,
-        methodName,
-        args,
-        gas: teraToGas(String(tgas)),
-        waitUntil: 'FINAL',
-      });
-      const outcomes = [r.transaction_outcome, ...r.receipts_outcome];
-      const burnt = outcomes.reduce((s: number, o: any) => s + o.outcome.gas_burnt, 0);
-      const events = outcomes
-        .flatMap((o: any) => o.outcome.logs as string[])
-        .filter((l) => l.startsWith('EVENT_JSON:'))
-        .map((l) => JSON.parse(l.slice('EVENT_JSON:'.length)));
-      return { hash: r.transaction.hash, value: getTransactionLastResult(r) as T, tgas: burnt / 1e12, events };
-    } catch (e) {
-      if (attempt < 3 && isTransient(e)) {
-        await sleep(700 * (attempt + 1));
-        continue;
-      }
-      throw e;
-    }
-  }
+function send<T>(acct: Account, methodName: string, args: object, tgas: number): Promise<TxResult<T>> {
+  return sendCall<T>(acct, provider, cfg.contract, methodName, args, tgas);
 }
 
 class Lane {

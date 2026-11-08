@@ -1,0 +1,208 @@
+import { live, api } from '../net.ts';
+import { call, errorText } from '../wallet.ts';
+import { state, $, fmt, esc, go, txLink, rarityOf, valueOf, RARITY_NAMES, refreshMe, toast } from '../state.ts';
+import { ITEM_BY_ID } from '../../../shared/catalog.ts';
+import { commitmentPreimage, type BagItem } from '../../../shared/rules.ts';
+import { iconSvg } from '../icons.ts';
+import { sound, buzz } from '../audio.ts';
+
+async function sha256hex(s: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function confetti(strong = false) {
+  const c = document.createElement('canvas');
+  c.className = 'confetti';
+  c.width = innerWidth;
+  c.height = innerHeight;
+  document.body.appendChild(c);
+  const g = c.getContext('2d')!;
+  const colors = ['#ffd23f', '#3ddc84', '#4aa8ff', '#ff9a3c', '#b06cff'];
+  const parts = Array.from({ length: strong ? 160 : 70 }, () => ({
+    x: innerWidth / 2, y: innerHeight * 0.4, vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 14 - 4,
+    s: 4 + Math.random() * 5, c: colors[Math.floor(Math.random() * colors.length)], r: Math.random() * 6,
+  }));
+  let frames = 0;
+  const step = () => {
+    g.clearRect(0, 0, c.width, c.height);
+    for (const p of parts) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.45;
+      p.r += 0.2;
+      g.save();
+      g.translate(p.x, p.y);
+      g.rotate(p.r);
+      g.fillStyle = p.c;
+      g.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6);
+      g.restore();
+    }
+    if (++frames < 110) requestAnimationFrame(step);
+    else c.remove();
+  };
+  step();
+}
+
+export async function loadDemand(): Promise<Map<string, number>> {
+  const m = await api('/market').catch(() => ({ market: [] }));
+  return new Map(m.market.map((r: any) => [r.item_id, r.demand_bp]));
+}
+
+export function showSold(m: any) {
+  const won = m.winner === m.me;
+  const items: BagItem[] = m.items;
+  const el = document.createElement('div');
+  el.className = 'overlay';
+  el.innerHTML = `
+    <div class="sheet">
+      <div class="stamp ${won ? 'win' : ''}">${won ? 'YOURS!' : m.winner ? 'SOLD' : 'NO SALE'}</div>
+      <div class="result-line">${
+        won
+          ? `You won ${esc(m.flight?.code ?? '')} for <b>${fmt(m.price)} MI</b>`
+          : m.winner
+            ? `<b>${esc(m.winnerName)}</b> took it for <b>${fmt(m.price)} MI</b>${m.line ? ` · “${esc(m.line)}”` : ''}`
+            : 'Nobody bid. The bag goes back to storage.'
+      }</div>
+      ${won ? `<div class="profit"><i id="pbar" style="width:0%"></i><div class="be" id="pbe"></div><span><b id="ptotal">0</b><b id="pdiff">−${fmt(m.price)}</b></span></div>` : ''}
+      <div class="items" id="items"></div>
+      ${won ? `<button class="btn" id="openall" hidden>OPEN ALL POUCHES</button>` : ''}
+      <div id="summary" class="result-line"></div>
+      <div class="panel verify" id="verify">
+        <div class="section-title" style="margin:0">PROOF</div>
+        <div class="line"><i>🔒</i><span>Tag sealed on NEAR before bidding opened · ${m.sealedTx ? txLink(m.sealedTx) : '…'}</span></div>
+        <div class="line" id="v-local"><i><span class="spinner"></span></i><span>Checking the tag in your browser…</span></div>
+        <div class="line" id="v-chain"><i><span class="spinner"></span></i><span>House reveals contents on chain…</span></div>
+        ${won ? `<div class="line" id="v-pay"><i><span class="spinner"></span></i><span>Paying with your own key…</span></div>` : m.winner ? `<div class="line" id="v-pay"><i><span class="spinner"></span></i><span>${esc(m.winnerName)} pays with their key…</span></div>` : ''}
+        <div class="line"><i>🔎</i><a href="#lot/${m.lotId}">Full tag check for lot ${m.lotId}</a></div>
+      </div>
+      <div class="big-actions">
+        <button class="btn" id="tobags">${won ? 'SELL ITEMS' : 'MY BAGS'}</button>
+        <button class="btn primary" id="next">NEXT BAG</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  const close = (hash: string) => {
+    el.remove();
+    go(hash);
+  };
+  ($('#next', el) as HTMLButtonElement).onclick = () => close('#arrivals');
+  ($('#tobags', el) as HTMLButtonElement).onclick = () => close('#bags');
+
+  // ---- local tag check ----
+  void sha256hex(commitmentPreimage(state.cfg!.contract, m.lotId, m.tier, items, m.salt)).then((h) => {
+    const ok = h === m.commitment;
+    $('#v-local', el).innerHTML = `<i>${ok ? '✅' : '❌'}</i><span>${ok ? 'sha256(contents + salt) matches the tag' : 'Mismatch! The reveal does not match the tag.'} <span class="hash">${h.slice(0, 16)}…</span></span>`;
+  });
+
+  // ---- unzip ----
+  let total = 0;
+  let crossed = false;
+  const box = $('#items', el);
+  const tiles = items.map((it) => {
+    const t = document.createElement('div');
+    t.className = `item ${it.pouch ? 'pouch' : ''}`;
+    t.innerHTML = it.pouch ? '<div class="q">?</div><div class="cond">sealed pouch</div>' : '';
+    box.appendChild(t);
+    return t;
+  });
+  let demand = new Map<string, number>();
+
+  const update = () => {
+    if (!won) return;
+    const pct = Math.min(100, (total / Math.max(1, m.price * 2)) * 100);
+    const bar = $('#pbar', el);
+    bar.style.width = `${pct}%`;
+    bar.classList.toggle('green', total >= m.price);
+    ($('#pbe', el) as HTMLElement).style.left = '50%';
+    $('#ptotal', el).textContent = `${fmt(total)} MI inside`;
+    const diff = total - m.price;
+    $('#pdiff', el).textContent = `${diff >= 0 ? '+' : '−'}${fmt(Math.abs(diff))}`;
+    if (!crossed && total >= m.price) {
+      crossed = true;
+      sound.breakEven();
+      confetti();
+    }
+  };
+
+  const revealTile = (i: number) => {
+    const it = items[i];
+    const t = tiles[i];
+    const rar = rarityOf(it.id, m.tier);
+    const value = valueOf(it.id, it.cond, demand.get(it.id) ?? 10000);
+    t.className = `item in r-${RARITY_NAMES[rar]}`;
+    t.innerHTML = `${iconSvg(it.id)}<div class="nm">${esc(ITEM_BY_ID[it.id].name)}</div><div class="val">${fmt(value)}</div><div class="cond">${it.cond} · ${RARITY_NAMES[rar]}</div>`;
+    total += value;
+    sound.pop(rar);
+    if (rar >= 3) buzz(rar >= 4 ? [80, 40, 160] : 50);
+    if (rar >= 4) confetti(true);
+    update();
+  };
+
+  const openPouch = (i: number) => {
+    const t = tiles[i];
+    if (!t.classList.contains('pouch')) return;
+    t.classList.remove('pouch');
+    t.classList.add('wobble');
+    sound.crack();
+    setTimeout(() => revealTile(i), 420);
+  };
+
+  const pouchIdx = items.map((it, i) => (it.pouch ? i : -1)).filter((i) => i >= 0);
+  const visIdx = items.map((it, i) => (!it.pouch ? i : -1)).filter((i) => i >= 0);
+  loadDemand().then((d) => {
+    demand = d;
+    setTimeout(() => sound.zip(), 250);
+    visIdx.forEach((i, k) => setTimeout(() => revealTile(i), 600 + k * 230));
+    const afterVis = 600 + visIdx.length * 230 + 200;
+    setTimeout(() => {
+      tiles.forEach((t, i) => items[i].pouch && t.classList.add('in'));
+      if (won) {
+        tiles.forEach((t, i) => items[i].pouch && (t.onclick = () => openPouch(i)));
+        const all = $('#openall', el) as HTMLButtonElement;
+        all.hidden = false;
+        all.onclick = () => {
+          all.hidden = true;
+          pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), k * 450));
+        };
+      } else {
+        pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), 300 + k * 380));
+        setTimeout(() => {
+          if (!m.winner) return;
+          const diff = total - m.price;
+          $('#summary', el).innerHTML =
+            diff < 0
+              ? `${esc(m.winnerName)} overpaid by <b>${fmt(-diff)}</b>. You dodged that one.`
+              : `${esc(m.winnerName)} made <b>+${fmt(diff)}</b> on it. That one got away.`;
+        }, 300 + pouchIdx.length * 380 + 600);
+      }
+    }, afterVis);
+  });
+
+  // ---- chain progress ----
+  const off = live.on(async (x) => {
+    if (x.lotId !== m.lotId) return;
+    if (x.type === 'lot:revealed') {
+      $('#v-chain', el).innerHTML = `<i>✅</i><span>Revealed on chain; the contract re-checked the hash · ${txLink(x.tx)}</span>`;
+      if (won) {
+        try {
+          const paid = await call<string[]>('pay_lot', { id: m.lotId });
+          $('#v-pay', el).innerHTML = `<i>✅</i><span>Paid ${fmt(m.price)} MI with your key; ${paid.value.length} items are now yours · ${txLink(paid.hash)}</span>`;
+          void api(`/lot/${m.lotId}/paid`, { tx: paid.hash });
+          void refreshMe();
+        } catch (e) {
+          $('#v-pay', el).innerHTML = `<i>⚠️</i><span>Payment failed: ${esc(errorText(e))}. It will retry from My Bags.</span>`;
+        }
+      }
+    }
+    if (x.type === 'lot:paid') {
+      $('#v-pay', el) && ($('#v-pay', el).innerHTML = `<i>✅</i><span>${esc(m.winnerName)} paid with their own key · ${txLink(x.tx)}</span>`);
+      off();
+    }
+    if (x.type === 'lot:error') {
+      toast(`Settlement hiccup on lot ${m.lotId}: ${esc(x.message)}`);
+    }
+  });
+  if (!won && !m.winner) setTimeout(off, 20000);
+  if (won) setTimeout(off, 60000);
+}
