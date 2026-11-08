@@ -8,6 +8,7 @@ import { auction } from './screens/auction.ts';
 import { bags } from './screens/bags.ts';
 import { board } from './screens/board.ts';
 import { tag } from './screens/tag.ts';
+import { showHowto } from './screens/howto.ts';
 
 const app = $('#app');
 let cleanup: (() => void) | void;
@@ -17,6 +18,7 @@ function shell(active: string) {
     <div class="topbar">
       <div class="brand">FINAL CALL <span class="tag">TESTNET</span></div>
       <div id="wallet">${walletHtml()}</div>
+      <button class="icon-btn" id="help" aria-label="How to play">?</button>
       <button class="icon-btn" id="mute" aria-label="Sound">${isMuted() ? '🔇' : '🔊'}</button>
     </div>
     <div id="view"></div>
@@ -25,6 +27,7 @@ function shell(active: string) {
       <button data-go="#bags" class="${active === 'bags' ? 'on' : ''}">MY BAGS${state.pending.length ? '<span class="dot"></span>' : ''}</button>
       <button data-go="#board" class="${active === 'board' ? 'on' : ''}">BOARD</button>
     </nav>`;
+  ($('#help') as HTMLButtonElement).onclick = () => showHowto();
   ($('#mute') as HTMLButtonElement).onclick = () => {
     unlock();
     $('#mute').textContent = toggleMute() ? '🔇' : '🔊';

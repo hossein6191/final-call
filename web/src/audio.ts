@@ -1,10 +1,15 @@
-// All sound is synthesized: no audio files. Scanner hum, bid blips, bells, gavel, reveal chimes,
-// cash register and a quiet airport-lounge loop.
+// Final Call's sound. Everything is synthesized live (no audio files), modelled on real
+// objects: wooden paddles, a desk bell, a gavel, zipper teeth, velcro, coins, a crowd, an
+// airport chime, and a small lounge band. Every hit is randomized slightly so nothing
+// repeats exactly. No speech synthesis.
 
 let ctx: AudioContext | null = null;
 let master: GainNode;
 let sfx: GainNode;
 let music: GainNode;
+let verbIn: GainNode;
+let white: AudioBuffer;
+let brown: AudioBuffer;
 let muted = (() => {
   try {
     return localStorage.getItem('fc:muted') === '1';
@@ -13,18 +18,60 @@ let muted = (() => {
   }
 })();
 
+const R = (a: number, b: number) => a + Math.random() * (b - a);
+const vary = (x: number, p = 0.05) => x * (1 + R(-p, p));
+const now = () => ctx!.currentTime;
+
+function makeNoise(seconds: number, brownish: boolean): AudioBuffer {
+  const len = Math.floor(ctx!.sampleRate * seconds);
+  const buf = ctx!.createBuffer(1, len, ctx!.sampleRate);
+  const d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < len; i++) {
+    const w = Math.random() * 2 - 1;
+    if (brownish) {
+      last = (last + 0.02 * w) / 1.02;
+      d[i] = last * 3.5;
+    } else d[i] = w;
+  }
+  return buf;
+}
+
+function makeReverb(seconds = 2.2, decay = 3.2): ConvolverNode {
+  const c = ctx!.createConvolver();
+  const len = Math.floor(ctx!.sampleRate * seconds);
+  const buf = ctx!.createBuffer(2, len, ctx!.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  }
+  c.buffer = buf;
+  return c;
+}
+
 export function unlock() {
   if (!ctx) {
     ctx = new AudioContext();
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16;
+    comp.ratio.value = 3;
+    comp.connect(ctx.destination);
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.9;
-    master.connect(ctx.destination);
+    master.gain.value = muted ? 0 : 0.95;
+    master.connect(comp);
     sfx = ctx.createGain();
-    sfx.gain.value = 0.8;
+    sfx.gain.value = 0.85;
     sfx.connect(master);
     music = ctx.createGain();
-    music.gain.value = 0.22;
+    music.gain.value = 0.2;
     music.connect(master);
+    const verb = makeReverb();
+    verbIn = ctx.createGain();
+    const verbOut = ctx.createGain();
+    verbOut.gain.value = 0.32;
+    verbIn.connect(verb).connect(verbOut).connect(master);
+    white = makeNoise(2, false);
+    brown = makeNoise(2, true);
   }
   if (ctx.state === 'suspended') void ctx.resume();
 }
@@ -38,152 +85,245 @@ export function toggleMute() {
   try {
     localStorage.setItem('fc:muted', muted ? '1' : '0');
   } catch {}
-  if (master) master.gain.setTargetAtTime(muted ? 0 : 0.9, ctx!.currentTime, 0.05);
+  if (master) master.gain.setTargetAtTime(muted ? 0 : 0.95, now(), 0.05);
   return muted;
 }
 
-function tone(freq: number, dur: number, opts: { type?: OscillatorType; gain?: number; at?: number; slide?: number; out?: AudioNode } = {}) {
-  if (!ctx) return;
-  const t = ctx.currentTime + (opts.at ?? 0);
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
-  o.type = opts.type ?? 'sine';
-  o.frequency.setValueAtTime(freq, t);
-  if (opts.slide) o.frequency.exponentialRampToValueAtTime(opts.slide, t + dur);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(opts.gain ?? 0.3, t + 0.008);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(opts.out ?? sfx);
-  o.start(t);
-  o.stop(t + dur + 0.02);
+// ---------- building blocks ----------
+
+interface Opt {
+  at?: number;
+  peak?: number;
+  verb?: number;
+  bus?: AudioNode;
 }
 
-function noise(dur: number, opts: { at?: number; gain?: number; freq?: number; q?: number; type?: BiquadFilterType } = {}) {
-  if (!ctx) return;
-  const t = ctx.currentTime + (opts.at ?? 0);
-  const len = Math.ceil(ctx.sampleRate * dur);
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  const f = ctx.createBiquadFilter();
-  f.type = opts.type ?? 'bandpass';
-  f.frequency.value = opts.freq ?? 1200;
-  f.Q.value = opts.q ?? 1;
-  const g = ctx.createGain();
-  g.gain.value = opts.gain ?? 0.3;
-  src.connect(f).connect(g).connect(sfx);
-  src.start(t);
+function route(node: AudioNode, o: Opt) {
+  node.connect(o.bus ?? sfx);
+  if (o.verb) {
+    const s = ctx!.createGain();
+    s.gain.value = o.verb;
+    node.connect(s).connect(verbIn);
+  }
 }
+
+function osc(type: OscillatorType, f: number, dur: number, o: Opt & { to?: number; attack?: number } = {}) {
+  if (!ctx) return;
+  const t = now() + (o.at ?? 0);
+  const x = ctx.createOscillator();
+  const g = ctx.createGain();
+  x.type = type;
+  x.frequency.setValueAtTime(f, t);
+  if (o.to) x.frequency.exponentialRampToValueAtTime(o.to, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(o.peak ?? 0.2, t + (o.attack ?? 0.004));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  x.connect(g);
+  route(g, o);
+  x.start(t);
+  x.stop(t + dur + 0.05);
+}
+
+function noise(dur: number, o: Opt & { f?: number; to?: number; q?: number; type?: BiquadFilterType; attack?: number; brown?: boolean } = {}) {
+  if (!ctx) return;
+  const t = now() + (o.at ?? 0);
+  const s = ctx.createBufferSource();
+  s.buffer = o.brown ? brown : white;
+  s.playbackRate.value = R(0.9, 1.1);
+  const f = ctx.createBiquadFilter();
+  f.type = o.type ?? 'bandpass';
+  f.frequency.setValueAtTime(o.f ?? 1500, t);
+  if (o.to) f.frequency.exponentialRampToValueAtTime(o.to, t + dur);
+  f.Q.value = o.q ?? 1;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(o.peak ?? 0.2, t + (o.attack ?? 0.003));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f).connect(g);
+  route(g, o);
+  s.start(t, R(0, 1.5));
+  s.stop(t + dur + 0.05);
+}
+
+/** Struck wood: a pitched body plus a click. Paddles, ticks, gavel, drawers. */
+function wood(f: number, o: Opt & { decay?: number } = {}) {
+  const d = o.decay ?? 0.07;
+  osc('sine', vary(f, 0.03), d, { ...o, to: f * 0.92, peak: o.peak ?? 0.3 });
+  osc('triangle', vary(f * 2.7, 0.03), d * 0.5, { ...o, peak: (o.peak ?? 0.3) * 0.35 });
+  noise(0.012, { ...o, f: f * 3.2, q: 3, peak: (o.peak ?? 0.3) * 0.6 });
+}
+
+const DESK_BELL = [
+  [1, 1],
+  [2.32, 0.42],
+  [4.25, 0.24],
+  [6.63, 0.12],
+  [9.38, 0.06],
+];
+const GLASS = [
+  [1, 1],
+  [2.76, 0.3],
+  [5.4, 0.12],
+];
+
+/** A bell or chime built from inharmonic partials, with a long tail. */
+function bell(f: number, o: Opt & { dur?: number; partials?: number[][] } = {}) {
+  const dur = o.dur ?? 1.4;
+  for (const [ratio, amp] of o.partials ?? DESK_BELL) {
+    osc('sine', vary(f * ratio, 0.004), dur / Math.sqrt(ratio), { ...o, peak: (o.peak ?? 0.16) * amp, verb: o.verb ?? 0.35, attack: 0.002 });
+  }
+}
+
+/** A small metallic clink (coins, keys). */
+function clink(f: number, o: Opt = {}) {
+  for (const [ratio, amp] of [
+    [1, 1],
+    [1.47, 0.6],
+    [2.09, 0.4],
+    [2.9, 0.2],
+  ]) {
+    osc('sine', vary(f * ratio, 0.01), R(0.08, 0.22), { ...o, peak: (o.peak ?? 0.06) * amp, verb: 0.15 });
+  }
+}
+
+/** Electric-piano voice (two-operator FM). */
+function rhodes(f: number, dur: number, o: Opt = {}) {
+  if (!ctx) return;
+  const t = now() + (o.at ?? 0);
+  const car = ctx.createOscillator();
+  const mod = ctx.createOscillator();
+  const mg = ctx.createGain();
+  const g = ctx.createGain();
+  car.frequency.value = f;
+  mod.frequency.value = f;
+  mg.gain.setValueAtTime(f * 2.2, t);
+  mg.gain.exponentialRampToValueAtTime(f * 0.15, t + Math.min(dur, 0.9));
+  mod.connect(mg).connect(car.frequency);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(o.peak ?? 0.05, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  car.connect(g);
+  route(g, { ...o, verb: o.verb ?? 0.25 });
+  car.start(t);
+  mod.start(t);
+  car.stop(t + dur + 0.05);
+  mod.stop(t + dur + 0.05);
+}
+
+function applause(dur: number, density = 1) {
+  const n = Math.floor(dur * 55 * density);
+  for (let i = 0; i < n; i++) {
+    const at = Math.pow(Math.random(), 1.6) * dur;
+    noise(R(0.012, 0.03), { at, f: R(900, 2600), q: R(0.8, 1.6), peak: R(0.04, 0.12) * (1 - at / dur) + 0.02, verb: 0.3 });
+  }
+}
+
+const midi = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+
+// ---------- one-shot sounds ----------
 
 export const sound = {
   tap() {
-    tone(900, 0.04, { type: 'triangle', gain: 0.12 });
+    wood(R(1500, 1900), { peak: 0.1, decay: 0.03 });
   },
   bid(price: number, mine: boolean) {
-    // Pitch climbs with the price, so a long bidding war audibly heats up.
-    const f = 380 + Math.min(700, Math.log2(1 + price / 50) * 90);
-    tone(f, 0.12, { type: mine ? 'square' : 'triangle', gain: mine ? 0.13 : 0.16 });
-    tone(f * 1.5, 0.1, { type: 'sine', gain: 0.08, at: 0.05 });
+    // a paddle swishes up and taps: higher as the price climbs
+    const f = 240 + Math.min(420, Math.log2(1 + price / 50) * 55);
+    noise(0.09, { f: 2600, to: 900, q: 0.8, peak: 0.09 });
+    wood(mine ? f * 1.5 : f, { at: 0.05, peak: mine ? 0.22 : 0.3, decay: 0.09, verb: 0.12 });
   },
   fold() {
-    tone(320, 0.25, { type: 'sawtooth', gain: 0.06, slide: 160 });
+    noise(0.22, { type: 'lowpass', f: 700, to: 250, peak: 0.12, brown: true });
+    wood(R(260, 300), { at: 0.05, peak: 0.12 });
+    wood(R(200, 230), { at: 0.15, peak: 0.1 });
   },
   once() {
-    tone(1320, 0.5, { type: 'sine', gain: 0.22 });
-    tone(1980, 0.4, { type: 'sine', gain: 0.07 });
+    bell(vary(1975, 0.01), { peak: 0.16, dur: 1.3 });
   },
   twice() {
-    tone(1320, 0.35, { type: 'sine', gain: 0.22 });
-    tone(1320, 0.6, { type: 'sine', gain: 0.24, at: 0.18 });
-    tone(990, 0.6, { type: 'sine', gain: 0.1, at: 0.18 });
+    bell(vary(1975, 0.01), { peak: 0.15, dur: 0.9 });
+    bell(vary(1865, 0.01), { at: 0.17, peak: 0.17, dur: 1.4 });
   },
   gavel() {
-    noise(0.03, { freq: 1800, q: 2, gain: 0.6 });
-    tone(80, 0.15, { type: 'sine', gain: 0.7, slide: 50 });
-    tone(220, 0.06, { type: 'square', gain: 0.06 });
-    // room tail
-    noise(0.6, { at: 0.02, freq: 700, q: 0.5, type: 'lowpass', gain: 0.12 });
+    osc('sine', 78, 0.24, { to: 46, peak: 0.75, verb: 0.3 });
+    wood(vary(390, 0.04), { peak: 0.5, decay: 0.13, verb: 0.45 });
+    wood(vary(780, 0.04), { peak: 0.2, decay: 0.06, verb: 0.3 });
+    noise(0.03, { f: 1900, q: 2, peak: 0.45, verb: 0.4 });
   },
   sold(win: boolean) {
     this.gavel();
-    const chord = win ? [523, 659, 784, 1047] : [392, 466, 587];
-    chord.forEach((f, i) => tone(f, 0.7, { type: 'triangle', gain: 0.12, at: 0.12 + i * 0.05 }));
+    const root = 60 + Math.floor(R(0, 3));
+    const chord = win ? [0, 4, 7, 11, 14] : [0, 3, 7, 10];
+    chord.forEach((n, i) => rhodes(midi(root + n), 1.6, { at: 0.16 + i * 0.03, peak: 0.06 }));
+    if (win) applause(1.8, 1);
+    else noise(0.9, { at: 0.2, f: 500, to: 300, q: 2.5, peak: 0.14, verb: 0.3 }); // the room goes "aww"
   },
   zip() {
-    for (let i = 0; i < 9; i++) noise(0.03, { at: i * 0.035, freq: 2500 + i * 200, q: 4, gain: 0.25 });
+    // zipper teeth: a run of tiny clicks that speeds up, over a cloth swish
+    let t = 0;
+    const n = Math.floor(R(18, 26));
+    for (let i = 0; i < n; i++) {
+      noise(0.004, { at: t, f: R(3200, 5200), q: 4, peak: R(0.12, 0.22) });
+      t += 0.024 - (i / n) * 0.015 + R(-0.002, 0.002);
+    }
+    noise(t + 0.05, { f: 1800, q: 0.6, peak: 0.05, brown: true });
   },
   pop(rarity: number) {
-    const base = [440, 523, 659, 784, 988][rarity] ?? 440;
-    tone(base, 0.18, { type: 'triangle', gain: 0.18 });
-    if (rarity >= 2) [1.25, 1.5, 2].forEach((m, i) => tone(base * m, 0.25, { type: 'sine', gain: 0.1, at: 0.06 * (i + 1) }));
+    noise(0.09, { type: 'lowpass', f: 420, peak: 0.22, brown: true }); // the item lands on the table
+    if (rarity === 0) wood(R(520, 700), { at: 0.02, peak: 0.14 });
+    if (rarity === 1) bell(vary(1318), { at: 0.02, partials: GLASS, dur: 0.7, peak: 0.09 });
+    if (rarity === 2) [1568, 2093].forEach((f, i) => bell(vary(f, 0.005), { at: 0.03 + i * 0.09, partials: GLASS, dur: 0.9, peak: 0.1 }));
+    if (rarity === 3) {
+      [1046, 1318, 1568, 2093].forEach((f, i) => bell(f, { at: 0.03 + i * 0.08, partials: GLASS, dur: 1.2, peak: 0.1 }));
+      noise(0.6, { at: 0.1, type: 'highpass', f: 7000, peak: 0.04, verb: 0.4 });
+    }
     if (rarity >= 4) this.jackpot();
   },
   crack() {
-    noise(0.12, { freq: 600, q: 0.8, gain: 0.35 });
+    // velcro tearing open
+    let t = 0;
+    for (let i = 0; i < 14; i++) {
+      noise(R(0.006, 0.014), { at: t, f: R(1800, 3400), q: 1.2, peak: R(0.08, 0.18) });
+      t += R(0.008, 0.02);
+    }
+  },
+  chime() {
+    // the airport PA chime: ding... dong
+    bell(midi(81), { partials: GLASS, dur: 1.2, peak: 0.11 });
+    bell(midi(76), { at: 0.38, partials: GLASS, dur: 1.8, peak: 0.11 });
   },
   breakEven() {
-    [784, 988, 1175].forEach((f, i) => tone(f, 0.3, { type: 'sine', gain: 0.14, at: i * 0.07 }));
+    // the airport chime, rising: you're in profit
+    bell(midi(76), { partials: GLASS, dur: 1.3, peak: 0.12 });
+    bell(midi(81), { at: 0.32, partials: GLASS, dur: 1.6, peak: 0.12 });
   },
   jackpot() {
-    [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, 0.5, { type: 'square', gain: 0.07, at: 0.15 + i * 0.07 }));
-    noise(0.6, { at: 0.15, freq: 6000, type: 'highpass', gain: 0.08 });
+    [72, 74, 76, 79, 81, 84, 86, 88].forEach((m, i) => bell(midi(m), { at: 0.1 + i * 0.07, partials: GLASS, dur: 1.4, peak: 0.08 }));
+    osc('sine', 44, 1.2, { peak: 0.3 });
+    applause(2.6, 1.3);
+    noise(1.2, { at: 0.2, type: 'highpass', f: 6500, peak: 0.05, verb: 0.5 });
   },
   cash() {
-    tone(1568, 0.08, { type: 'square', gain: 0.08 });
-    tone(2093, 0.25, { type: 'square', gain: 0.08, at: 0.07 });
-    noise(0.15, { at: 0.05, freq: 5000, type: 'highpass', gain: 0.12 });
+    for (let i = 0; i < 4; i++) clink(R(2600, 4300), { at: R(0, 0.22), peak: 0.06 });
+    wood(160, { at: 0.02, peak: 0.3, decay: 0.15 }); // the drawer
+    noise(0.05, { at: 0.02, type: 'lowpass', f: 600, peak: 0.18, brown: true });
   },
   whoosh() {
-    noise(0.5, { freq: 1200, q: 0.6, gain: 0.2 });
+    noise(0.5, { f: 400, to: 2400, q: 0.7, peak: 0.12 });
   },
   error() {
-    tone(200, 0.2, { type: 'square', gain: 0.08 });
-    tone(150, 0.25, { type: 'square', gain: 0.08, at: 0.12 });
+    wood(210, { peak: 0.16 });
+    wood(170, { at: 0.12, peak: 0.16 });
   },
 };
 
-// ---------- the auctioneer ----------
-// A real voice (the browser's speech engine) calls the auction. It is short on purpose so it
-// never lags behind the clock.
-let voice: SpeechSynthesisVoice | null = null;
-function pickVoice() {
-  try {
-    const all = speechSynthesis.getVoices();
-    const pref = ['Daniel', 'Google UK English Male', 'Alex', 'Fred', 'Google US English'];
-    voice = pref.map((n) => all.find((v) => v.name.includes(n))).find(Boolean) ?? all.find((v) => v.lang.startsWith('en')) ?? null;
-  } catch {
-    voice = null;
-  }
-}
-try {
-  speechSynthesis.onvoiceschanged = pickVoice;
-  pickVoice();
-} catch {}
+// The auctioneer now speaks through the bells and the room, not a computer voice.
+export function announce(_text: string, _opts: object = {}) {}
+export function hush() {}
+export function chant(_on: boolean, _heat = 0) {}
 
-export function announce(text: string, opts: { rate?: number; pitch?: number; urgent?: boolean } = {}) {
-  if (muted) return;
-  try {
-    if (opts.urgent) speechSynthesis.cancel();
-    else if (speechSynthesis.speaking) return;
-    const u = new SpeechSynthesisUtterance(text);
-    if (voice) u.voice = voice;
-    u.rate = opts.rate ?? 1.18;
-    u.pitch = opts.pitch ?? 0.85;
-    u.volume = 0.9;
-    speechSynthesis.speak(u);
-  } catch {}
-}
-
-export function hush() {
-  try {
-    speechSynthesis.cancel();
-  } catch {}
-}
-
-// ---------- crowd and tension ----------
-let crowd: { gain: GainNode; stop: () => void } | null = null;
+// ---------- crowd ----------
+let crowd: { gains: GainNode[]; stop: () => void } | null = null;
 export function crowdBed(on: boolean) {
   if (!ctx) return;
   if (!on) {
@@ -192,154 +332,113 @@ export function crowdBed(on: boolean) {
     return;
   }
   if (crowd) return;
-  const len = ctx.sampleRate * 2;
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  let last = 0;
-  for (let i = 0; i < len; i++) {
-    last = last * 0.97 + (Math.random() * 2 - 1) * 0.03; // brown-ish murmur
-    d[i] = last * 6;
+  const gains: GainNode[] = [];
+  const srcs: AudioBufferSourceNode[] = [];
+  for (let i = 0; i < 5; i++) {
+    const s = ctx.createBufferSource();
+    s.buffer = brown;
+    s.loop = true;
+    s.playbackRate.value = R(0.85, 1.15);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = R(260, 720);
+    f.Q.value = R(1.2, 2.2);
+    const g = ctx.createGain();
+    g.gain.value = 0.0001;
+    s.connect(f).connect(g);
+    route(g, { verb: 0.3 });
+    s.start(now(), R(0, 1.8));
+    gains.push(g);
+    srcs.push(s);
   }
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.loop = true;
-  const f = ctx.createBiquadFilter();
-  f.type = 'bandpass';
-  f.frequency.value = 420;
-  f.Q.value = 0.6;
-  const g = ctx.createGain();
-  g.gain.value = 0.0001;
-  g.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.8);
-  src.connect(f).connect(g).connect(sfx);
-  src.start();
+  // each voice drifts in and out like people talking
+  const timer = window.setInterval(() => {
+    for (const g of gains) g.gain.setTargetAtTime(R(0.004, 0.035), now(), R(0.2, 0.6));
+  }, 450);
   crowd = {
-    gain: g,
+    gains,
     stop: () => {
-      g.gain.setTargetAtTime(0.0001, ctx!.currentTime, 0.3);
-      src.stop(ctx!.currentTime + 1.5);
+      clearInterval(timer);
+      for (const g of gains) g.gain.setTargetAtTime(0.0001, now(), 0.3);
+      for (const s of srcs) s.stop(now() + 1.5);
     },
   };
 }
 
-/** The room reacts to a bid: a short swell of murmur. */
+/** The room reacts to a bid. */
 export function crowdSwell(amount = 1) {
   if (!ctx || !crowd) return;
-  const t = ctx.currentTime;
-  crowd.gain.gain.cancelScheduledValues(t);
-  crowd.gain.gain.setValueAtTime(crowd.gain.gain.value, t);
-  crowd.gain.gain.linearRampToValueAtTime(0.05 + 0.07 * amount, t + 0.12);
-  crowd.gain.gain.linearRampToValueAtTime(0.05, t + 1.2);
+  for (const g of crowd.gains) {
+    g.gain.cancelScheduledValues(now());
+    g.gain.setTargetAtTime(0.03 + 0.05 * amount * Math.random(), now(), 0.05);
+  }
+  musicIntensity(0.3 + amount * 0.7);
 }
 
-// ---------- the chant ----------
-// Auctioneer patter as formant-filtered syllables on a 150 BPM eighth-note grid. It carries the
-// rhythm; the numbers are on screen. (Spoken words are kept for "going once/twice/sold".)
-let chantTimer: number | null = null;
-let chantStep = 0;
-function syllable(pitch: number, vowel: number, at = 0) {
-  if (!ctx) return;
-  const t = ctx.currentTime + at;
-  const o = ctx.createOscillator();
-  o.type = 'sawtooth';
-  o.frequency.setValueAtTime(pitch, t);
-  o.frequency.linearRampToValueAtTime(pitch * 0.94, t + 0.08);
-  const formants = [
-    [700, 1200], // ah
-    [400, 2000], // ee
-    [500, 900], // oh
-    [600, 1700], // eh
-  ][vowel % 4];
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.14, t + 0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.085);
-  for (const f of formants) {
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = f;
-    bp.Q.value = 6;
-    o.connect(bp).connect(g);
-  }
-  g.connect(sfx);
-  o.start(t);
-  o.stop(t + 0.1);
-}
-export function chant(on: boolean, heat = 0) {
-  if (!ctx) return;
-  if (!on) {
-    if (chantTimer !== null) clearInterval(chantTimer);
-    chantTimer = null;
-    return;
-  }
-  if (chantTimer !== null) return;
-  chantStep = 0;
-  const base = 150 + heat * 12;
-  chantTimer = window.setInterval(() => {
-    // phrases of 6 syllables with a pitch glide, a rest every 8 steps
-    const pos = chantStep % 8;
-    if (pos < 6) syllable(base * Math.pow(2, (Math.random() * 4 - 2 + pos * 0.5) / 12), Math.floor(Math.random() * 4));
-    chantStep++;
-  }, 200);
-}
-
+// ---------- tension ----------
+let tickTock = false;
 export const tension = {
-  geiger(rate: number) {
-    // one tick; the caller decides how often (4-20 per second)
-    noise(0.004, { freq: 2000 + rate * 100, q: 3, gain: 0.35 });
-  },
-  lock() {
-    tone(1100, 0.06, { type: 'sine', gain: 0.12 });
-    tone(1650, 0.08, { type: 'sine', gain: 0.08, at: 0.05 });
-  },
-  count(step: number) {
-    // rising notes as a number counts up (C D E F G ...)
-    const scale = [523, 587, 659, 698, 784, 880, 988, 1047];
-    tone(scale[step % scale.length] * (step >= scale.length ? 2 : 1), 0.05, { type: 'triangle', gain: 0.06 });
-  },
-  drumroll(ms: number) {
-    for (let t = 0; t < ms / 1000; t += 0.045) noise(0.04, { at: t, freq: 900, q: 0.8, gain: 0.12 + (t / (ms / 1000)) * 0.2 });
-  },
-  deflate() {
-    tone(420, 0.6, { type: 'sawtooth', gain: 0.07, slide: 110 });
-  },
-  ooh() {
-    noise(0.7, { freq: 520, q: 2.5, gain: 0.25 });
-    tone(220, 0.6, { type: 'sine', gain: 0.05, slide: 260 });
-  },
   tick(fast: boolean) {
-    tone(fast ? 1800 : 1400, 0.03, { type: 'square', gain: fast ? 0.07 : 0.05 });
+    tickTock = !tickTock; // a wall clock: tick, tock
+    wood(tickTock ? 2500 : 1900, { peak: fast ? 0.14 : 0.08, decay: 0.025 });
   },
   heartbeat() {
-    tone(62, 0.12, { type: 'sine', gain: 0.5, slide: 45 });
-    tone(58, 0.12, { type: 'sine', gain: 0.38, slide: 42, at: 0.18 });
+    osc('sine', 60, 0.15, { to: 40, peak: 0.42 });
+    osc('sine', 54, 0.15, { to: 38, peak: 0.3, at: 0.17 });
   },
-  whoosh() {
-    noise(0.35, { freq: 900, q: 0.7, gain: 0.25 });
+  geiger(_rate: number) {
+    noise(0.002, { type: 'highpass', f: R(3500, 5500), peak: R(0.15, 0.3) });
   },
-  clunk() {
-    tone(90, 0.18, { type: 'sine', gain: 0.45, slide: 60 });
-    noise(0.05, { freq: 300, q: 1, gain: 0.3 });
+  lock() {
+    bell(2637, { partials: GLASS, dur: 0.45, peak: 0.07 });
   },
-  xrayOn() {
-    tone(2400, 0.12, { type: 'sine', gain: 0.08, slide: 3200 });
-    noise(0.12, { freq: 7000, type: 'highpass', gain: 0.06 });
+  count(step: number) {
+    // a marimba walking up the scale as the number counts
+    const scale = [72, 74, 76, 77, 79, 81, 83, 84, 86, 88];
+    const f = midi(scale[step % scale.length]);
+    osc('sine', f, 0.22, { peak: 0.09, verb: 0.15 });
+    osc('sine', f * 4, 0.05, { peak: 0.03 });
+  },
+  drumroll(ms: number) {
+    const dur = ms / 1000;
+    for (let t = 0; t < dur; t += R(0.026, 0.038)) noise(0.03, { at: t, f: R(1500, 2200), q: 0.8, peak: 0.05 + (t / dur) * 0.15 });
+    noise(0.9, { at: dur, type: 'highpass', f: 5000, peak: 0.12, verb: 0.4 }); // cymbal
+    osc('sine', 70, 0.3, { at: dur, to: 45, peak: 0.4 });
+  },
+  deflate() {
+    osc('sawtooth', 220, 0.35, { to: 196, peak: 0.05 });
+    osc('sawtooth', 196, 0.6, { at: 0.32, to: 150, peak: 0.05 });
+  },
+  ooh() {
+    for (let i = 0; i < 6; i++) noise(0.8, { at: R(0, 0.08), f: R(380, 620), to: R(520, 760), q: 3, peak: 0.07, attack: 0.15, verb: 0.3 });
   },
   rumble(level: number) {
-    // a sub-bass swell for big moments (jackpots, bidding wars)
-    tone(40 + level * 6, 0.6, { type: 'sine', gain: 0.25 + level * 0.1 });
+    osc('sine', 42 + level * 4, 0.9, { peak: 0.22 + level * 0.08, attack: 0.08 });
   },
   sniped() {
-    tone(700, 0.15, { type: 'sawtooth', gain: 0.08, slide: 300 });
-    tone(500, 0.3, { type: 'sawtooth', gain: 0.07, slide: 180, at: 0.12 });
+    noise(0.2, { f: 3200, to: 500, q: 3, peak: 0.18 });
+    wood(240, { at: 0.12, peak: 0.2 });
   },
   rise(rarity: number) {
-    // anticipation before a pouch opens; longer and higher for rarer things
-    const dur = [0.25, 0.3, 0.45, 0.7, 1.1][rarity] ?? 0.3;
-    tone(300, dur, { type: 'sine', gain: 0.1, slide: 300 * (1.5 + rarity * 0.6) });
+    const dur = [0.25, 0.32, 0.5, 0.75, 1.15][rarity] ?? 0.3;
+    noise(dur, { f: 300, to: 1400 + rarity * 900, q: 1.4, peak: 0.06 + rarity * 0.025, attack: dur * 0.8 });
+  },
+  whoosh() {
+    noise(0.45, { type: 'lowpass', f: 300, to: 1600, peak: 0.16, brown: true });
+  },
+  clunk() {
+    osc('sine', 92, 0.2, { to: 52, peak: 0.5 });
+    noise(0.08, { type: 'lowpass', f: 500, peak: 0.3, brown: true });
+    for (let i = 0; i < 4; i++) wood(R(900, 1200), { at: 0.06 + i * 0.045, peak: 0.05, decay: 0.02 }); // rollers
+  },
+  xrayOn() {
+    osc('sine', 140, 0.35, { to: 620, peak: 0.05 });
+    osc('sine', 1180, 0.09, { at: 0.3, peak: 0.07 });
+    osc('sine', 1180, 0.09, { at: 0.42, peak: 0.07 });
   },
 };
 
-// ---------- scanner hum ----------
+// ---------- conveyor and scanner ----------
 let hum: { stop: () => void } | null = null;
 export function scanHum(on: boolean) {
   if (!ctx) return;
@@ -349,57 +448,110 @@ export function scanHum(on: boolean) {
     return;
   }
   if (hum) return;
-  const o = ctx.createOscillator();
-  const lfo = ctx.createOscillator();
-  const lfoGain = ctx.createGain();
-  const g = ctx.createGain();
-  o.type = 'sawtooth';
-  o.frequency.value = 60;
-  lfo.frequency.value = 7;
-  lfoGain.gain.value = 6;
-  lfo.connect(lfoGain).connect(o.frequency);
+  const s = ctx.createBufferSource();
+  s.buffer = brown;
+  s.loop = true;
   const f = ctx.createBiquadFilter();
   f.type = 'lowpass';
-  f.frequency.value = 500;
+  f.frequency.value = 220;
+  const g = ctx.createGain();
   g.gain.value = 0.0001;
-  g.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.2);
-  o.connect(f).connect(g).connect(sfx);
-  o.start();
-  lfo.start();
+  g.gain.exponentialRampToValueAtTime(0.16, now() + 0.3);
+  s.connect(f).connect(g).connect(sfx);
+  s.start();
+  const mains = ctx.createOscillator();
+  mains.frequency.value = 50;
+  const mg = ctx.createGain();
+  mg.gain.value = 0.015;
+  mains.connect(mg).connect(sfx);
+  mains.start();
+  const rollers = window.setInterval(() => wood(R(900, 1150), { peak: 0.025, decay: 0.015 }), 170);
   hum = {
     stop: () => {
-      g.gain.setTargetAtTime(0.0001, ctx!.currentTime, 0.08);
-      o.stop(ctx!.currentTime + 0.4);
-      lfo.stop(ctx!.currentTime + 0.4);
+      clearInterval(rollers);
+      g.gain.setTargetAtTime(0.0001, now(), 0.1);
+      mg.gain.setTargetAtTime(0.0001, now(), 0.1);
+      s.stop(now() + 0.6);
+      mains.stop(now() + 0.6);
     },
   };
 }
 
-// ---------- lounge loop ----------
-let loop: number | null = null;
-const PROG = [
-  [261.6, 329.6, 392.0, 493.9], // Cmaj7
-  [220.0, 261.6, 329.6, 392.0], // Am7
-  [293.7, 349.2, 440.0, 523.3], // Dm7
-  [196.0, 246.9, 293.7, 349.2], // G7
+// ---------- music ----------
+// Lounge: electric piano, walking bass, brushes. Auction: a low pulse that rises with the bidding.
+type Mode = 'lounge' | 'auction' | 'off';
+let mode: Mode = 'off';
+let nextBar = 0;
+let barTimer: number | null = null;
+let intensity = 0.3;
+let progression: number[][] = [];
+
+// ii-V-I-vi style progressions, as chord tones (MIDI), root first
+const PROGS = [
+  [[50, 53, 57, 60, 64], [43, 53, 57, 59, 64], [48, 52, 55, 59, 62], [45, 52, 55, 58, 61]],
+  [[53, 57, 60, 64, 67], [52, 55, 59, 62, 67], [50, 53, 57, 60, 64], [43, 53, 55, 59, 62]],
+  [[48, 52, 55, 59, 62], [45, 52, 55, 60, 64], [50, 53, 57, 60, 65], [43, 50, 53, 59, 64]],
+  [[57, 60, 64, 67, 71], [50, 57, 60, 65, 69], [55, 59, 62, 65, 69], [48, 55, 59, 62, 64]],
 ];
+
+function loungeBar(t0: number, chord: number[], beat: number) {
+  const at = (x: number) => Math.max(0, t0 + x - now() + R(-0.008, 0.008));
+  const voicing = chord.slice(1).map((n) => (Math.random() < 0.3 ? n + 12 : n));
+  voicing.forEach((n) => rhodes(midi(n), beat * 3.4, { at: at(0), peak: 0.032, bus: music }));
+  if (Math.random() < 0.6) voicing.slice(1, 4).forEach((n) => rhodes(midi(n), beat * 1.2, { at: at(beat * 2.5), peak: 0.022, bus: music }));
+  // walking bass on the beats
+  const root = chord[0] - 12;
+  const walk = [root, root + (Math.random() < 0.5 ? 4 : 3), root + 7, root + (Math.random() < 0.5 ? 10 : 9)];
+  walk.forEach((n, i) => osc('triangle', midi(n), beat * 0.9, { at: at(i * beat), peak: 0.14, bus: music, attack: 0.01 }));
+  // brushes on 2 and 4, a soft ride on every beat
+  for (const b of [1, 3]) noise(beat * 0.7, { at: at(b * beat), f: 3200, q: 0.5, peak: 0.035, attack: 0.03, bus: music });
+  for (let i = 0; i < 4; i++) noise(0.12, { at: at(i * beat), type: 'highpass', f: 7500, peak: 0.018, bus: music });
+}
+
+function auctionBar(t0: number, beat: number) {
+  const at = (x: number) => Math.max(0, t0 + x - now());
+  const root = 45; // A
+  const pattern = [0, 0, 12, 0, 0, 7, 0, 10];
+  pattern.forEach((n, i) => osc('sawtooth', midi(root + n - 12), beat * 0.4, { at: at((i * beat) / 2), peak: 0.035 + intensity * 0.04, bus: music, attack: 0.005 }));
+  for (let i = 0; i < 8; i++) noise(0.04, { at: at((i * beat) / 2), type: 'highpass', f: 8000, peak: 0.01 + intensity * 0.03, bus: music });
+  osc('sine', midi(root - 24), beat * 4, { at: at(0), peak: 0.08 + intensity * 0.06, bus: music, attack: 0.3 });
+  if (intensity > 0.6) for (let i = 0; i < 4; i++) osc('sine', midi(root + 12 + [0, 3, 7, 12][i]), beat * 0.25, { at: at(i * beat), peak: 0.02, bus: music });
+}
+
+function scheduleBar() {
+  if (!ctx || mode === 'off') return;
+  const beat = mode === 'lounge' ? 60 / 84 : 60 / 118;
+  if (nextBar < now()) nextBar = now() + 0.05;
+  if (mode === 'lounge') {
+    if (!progression.length) progression = PROGS[Math.floor(Math.random() * PROGS.length)].slice();
+    loungeBar(nextBar, progression.shift()!, beat);
+  } else auctionBar(nextBar, beat);
+  nextBar += beat * 4;
+  barTimer = window.setTimeout(scheduleBar, Math.max(50, (nextBar - now() - 0.25) * 1000));
+}
+
+export function musicMode(m: Mode) {
+  if (m === mode) return;
+  mode = m;
+  if (barTimer !== null) clearTimeout(barTimer);
+  barTimer = null;
+  progression = [];
+  intensity = 0.3;
+  if (ctx && m !== 'off') {
+    nextBar = now() + 0.1;
+    scheduleBar();
+  }
+}
+
+export function musicIntensity(x: number) {
+  intensity = Math.max(0, Math.min(1, x));
+}
+
 export function startMusic() {
-  if (!ctx || loop !== null) return;
-  let bar = 0;
-  const beat = 60 / 84;
-  const play = () => {
-    const chord = PROG[bar % PROG.length];
-    chord.forEach((f, i) => tone(f, beat * 3.6, { type: 'sine', gain: 0.05, at: i * 0.02, out: music }));
-    tone(chord[0] / 2, beat * 1.8, { type: 'triangle', gain: 0.09, out: music });
-    tone(chord[2] / 2, beat * 1.6, { type: 'triangle', gain: 0.07, at: beat * 2, out: music });
-    bar++;
-  };
-  play();
-  loop = window.setInterval(play, beat * 4 * 1000);
+  if (mode === 'off') musicMode('lounge');
 }
 export function stopMusic() {
-  if (loop !== null) clearInterval(loop);
-  loop = null;
+  musicMode('off');
 }
 
 export function buzz(ms: number | number[]) {

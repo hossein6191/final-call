@@ -2,6 +2,7 @@ import { api } from '../net.ts';
 import { newPublicKey, saveIdentity, loadIdentity } from '../wallet.ts';
 import { state, $, esc, txLink, go, accLink } from '../state.ts';
 import { unlock, sound } from '../audio.ts';
+import { showHowto, howtoSeen } from './howto.ts';
 
 function flap(text: string) {
   return [...text]
@@ -25,8 +26,10 @@ export function welcome(root: HTMLElement) {
       <button class="btn primary" id="go" type="submit">CHECK IN</button>
     </form>
     <div id="progress" class="checklist" hidden></div>
-    <div class="small muted">Runs on NEAR testnet. Miles are play money.</div>
+    <div class="row small"><button class="btn ghost" id="how" style="min-height:36px;font-size:15px;padding:6px 10px">HOW TO PLAY</button><span class="grow"></span><span class="muted">Runs on NEAR testnet. Miles are play money.</span></div>
   </div>`;
+  ($('#how', root) as HTMLButtonElement).onclick = () => showHowto();
+  if (!howtoSeen()) setTimeout(() => showHowto(), 900);
 
   const form = $('#join', root) as HTMLFormElement;
   form.onsubmit = async (ev) => {

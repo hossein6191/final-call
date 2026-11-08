@@ -4,7 +4,7 @@ import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { makeRng, type ManifestSlot } from '../../../shared/rules.ts';
 import { drawIcon, XRAY } from '../icons.ts';
 import { AVATARS } from '../avatars.ts';
-import { sound, scanHum, buzz, announce, hush, crowdBed, crowdSwell, tension, chant } from '../audio.ts';
+import { sound, scanHum, buzz, crowdBed, crowdSwell, tension, musicMode } from '../audio.ts';
 import { showSold } from './unzip.ts';
 
 interface Slot {
@@ -577,6 +577,7 @@ export function auction(root: HTMLElement, lotId: number) {
         phase = 'arrive';
         arriveStart = performance.now();
         tension.whoosh();
+        sound.chime();
         $('#hint', root).textContent = `NOW ARRIVING · BELT ${m.flight.carousel}`;
         setTimeout(() => {
           if (phase !== 'arrive') return;
@@ -608,8 +609,7 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#bidv', root).textContent = fmt(next);
         $('#jumpv', root).textContent = '+3 steps';
         controls(true);
-        announce(`Who'll start me at ${price}?`, { urgent: true });
-        chant(true);
+        musicMode('auction');
         break;
       case 'auction:bid': {
         price = m.price;
@@ -637,8 +637,6 @@ export function auction(root: HTMLElement, lotId: number) {
           tension.rumble(Math.min(3, m.war - 3));
         }
         if (m.jump) tension.ooh();
-        chant(false);
-        chant(true, Math.min(4, m.war ?? 0));
         break;
       }
       case 'auction:twitch': {
@@ -657,8 +655,6 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'auction:call':
         showCallout(m.stage);
         m.stage === 'once' ? sound.once() : sound.twice();
-        chant(false);
-        announce(m.stage === 'once' ? 'Going once' : 'Going twice', { urgent: true, rate: 1.05 });
         buzz(m.stage === 'once' ? 30 : [30, 60, 30]);
         break;
       case 'auction:fold': {
@@ -690,7 +686,6 @@ export function auction(root: HTMLElement, lotId: number) {
         controls(false);
         scanHum(false);
         crowdBed(false);
-        chant(false);
         $('#auctionRoot', root).classList.remove('duel');
         // hitstop, gavel slam, camera punch, shake: the hammer has to feel heavy
         freezeUntil = performance.now() + 150;
@@ -699,7 +694,7 @@ export function auction(root: HTMLElement, lotId: number) {
         belt.classList.add('punch');
         slam();
         sound.sold(m.winner === me);
-        announce(m.winner === me ? 'Sold! To you!' : m.winner ? `Sold, to ${m.winnerName}!` : 'No sale.', { urgent: true, rate: 1.0 });
+        musicMode('lounge');
         buzz([60, 40, 120]);
         // reveal the whole bag on the belt too
         for (let i = 0; i < covered.length; i++) covered[i] = true;
@@ -742,6 +737,17 @@ export function auction(root: HTMLElement, lotId: number) {
 
   const onResize = () => manifest.length && layout();
   window.addEventListener('resize', onResize);
+  // Keyboard on a computer: Space/Enter bid, J jump, F fold.
+  const onKey = (e: KeyboardEvent) => {
+    if (e.repeat || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k === 'enter') ($('#bid', root) as HTMLButtonElement).click();
+    else if (k === 'j') ($('#jump', root) as HTMLButtonElement).click();
+    else if (k === 'f') ($('#fold', root) as HTMLButtonElement).click();
+    else return;
+    e.preventDefault();
+  };
+  window.addEventListener('keydown', onKey);
   raf = requestAnimationFrame(draw);
   void live.send({ type: 'enter', lotId });
 
@@ -750,9 +756,9 @@ export function auction(root: HTMLElement, lotId: number) {
     cancelAnimationFrame(raf);
     scanHum(false);
     crowdBed(false);
-    chant(false);
-    hush();
+    musicMode('lounge');
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('keydown', onKey);
     document.querySelector('.overlay')?.remove();
   };
 }

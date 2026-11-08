@@ -399,6 +399,8 @@ process.on('uncaughtException', (e) => console.error('uncaught exception', panic
 server.listen(cfg.port, async () => {
   console.log(`Final Call on http://localhost:${cfg.port} (contract ${cfg.contract})`);
   await syncRivals().catch((e) => console.error('sync rivals', panicMessage(e)));
+  // NO_BACKGROUND=1: a local UI test next to the live server; skip jobs that would race it.
+  if (process.env.NO_BACKGROUND === '1') return console.log('background jobs off (NO_BACKGROUND=1)');
   await recover(true);
   await fillPool().catch((e) => console.error('fill pool', panicMessage(e)));
   setInterval(() => void fillPool().catch(() => {}), 20_000);
