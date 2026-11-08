@@ -1,10 +1,10 @@
 // One live auction: a player and three rivals bid on a sealed bag.
 // The server holds the clock. When the hammer falls the House reveals the bag on chain,
 // and the winner pays with their own key.
-import { AUCTION, increment, parseItemToken, publicEstimate, type ManifestSlot } from '../shared/rules.ts';
+import { AUCTION, increment, itemValue, parseItemToken, publicEstimate, type ManifestSlot } from '../shared/rules.ts';
 import { ITEM_BY_ID } from '../shared/catalog.ts';
 import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, type BagRow } from './db.ts';
-import { house, panicMessage, txUrl } from './chain.ts';
+import { house, panicMessage, rival as rivalTx, txUrl } from './chain.ts';
 import { voiceRivals, scriptedLines, type Lines, type Voiced } from './ai.ts';
 import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
 
@@ -324,6 +324,28 @@ export class Auction {
     void this.settle(winner, items);
   }
 
+  /** Collectors at the table who lost the bag bid for the piece they wanted, on chain. */
+  private async collectorsWant(items: string[]) {
+    for (const s of this.rivals) {
+      const r = s.rival!;
+      if (!r.def.loves?.length) continue;
+      const wanted = items
+        .map(parseItemToken)
+        .filter((it) => r.def.loves!.includes(ITEM_BY_ID[it.id].category))
+        .sort((a, b) => itemValue(b) - itemValue(a))[0];
+      if (!wanted) continue;
+      const price = Math.round(itemValue(wanted) * (1.4 + Math.random() * 0.2));
+      if (price < 15 || price > freeMiles(r) * 0.5) continue;
+      try {
+        const tx = await rivalTx<number>(r.def.sub, 'post_order', { item_id: wanted.id, min_cond: wanted.cond, price_each: price, amount: 1 });
+        addFeed('order', { rival: r.def.sub, item: wanted.id, price, tx: tx.hash });
+        this.send({ type: 'rival:offer', by: s.id, name: s.name, item: wanted.id, itemName: ITEM_BY_ID[wanted.id].name, price, tx: tx.hash });
+      } catch (e) {
+        console.error('collector order', panicMessage(e));
+      }
+    }
+  }
+
   private async settle(winner: Seat | null, items: string[]) {
     const id = this.bag.id;
     try {
@@ -331,6 +353,7 @@ export class Auction {
       setBag(id, { closed_tx: tx.hash, status: winner ? 'awaiting_payment' : 'unsold' });
       this.send({ type: 'lot:revealed', lotId: id, tx: tx.hash, url: txUrl(tx.hash) });
       addFeed('lot', { id, tier: this.bag.tier, winner: winner?.id ?? null, name: winner?.name ?? null, price: winner ? this.price : 0, tx: tx.hash });
+      if (winner === this.player) void this.collectorsWant(items);
       if (winner?.rival) {
         await rivalWon(winner.rival, id, (hash) => {
           setBag(id, { paid_tx: hash, status: 'paid' });

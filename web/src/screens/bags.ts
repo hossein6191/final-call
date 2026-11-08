@@ -7,6 +7,41 @@ import { iconSvg } from '../icons.ts';
 
 const RANK: Record<string, number> = { worn: 0, good: 1, mint: 2 };
 
+/** Coins fly from the button to the wallet along a curve. */
+function coinFlight(from: HTMLElement, amount: number) {
+  const to = document.querySelector('#wallet .miles') as HTMLElement | null;
+  if (!to) return;
+  const a = from.getBoundingClientRect();
+  const b = to.getBoundingClientRect();
+  const n = Math.max(3, Math.min(10, Math.round(amount / 25)));
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('div');
+    c.className = 'coin';
+    document.body.appendChild(c);
+    const x0 = a.left + a.width / 2, y0 = a.top + a.height / 2;
+    const x1 = b.left + b.width / 2, y1 = b.top + b.height / 2;
+    const cx = (x0 + x1) / 2 + (Math.random() - 0.5) * 120, cy = Math.min(y0, y1) - 80 - Math.random() * 60;
+    const t0 = performance.now() + i * 40;
+    const step = (t: number) => {
+      const k = Math.min(1, Math.max(0, (t - t0) / 420));
+      const e = k * k * (3 - 2 * k);
+      const x = (1 - e) * (1 - e) * x0 + 2 * (1 - e) * e * cx + e * e * x1;
+      const y = (1 - e) * (1 - e) * y0 + 2 * (1 - e) * e * cy + e * e * y1;
+      c.style.transform = `translate(${x - 8}px, ${y - 8}px) scale(${1 - k * 0.4})`;
+      if (k < 1) requestAnimationFrame(step);
+      else {
+        c.remove();
+        if (i === n - 1) {
+          to.classList.remove('bump');
+          void to.offsetWidth;
+          to.classList.add('bump');
+        }
+      }
+    };
+    requestAnimationFrame(step);
+  }
+}
+
 export function bags(root: HTMLElement) {
   root.innerHTML = `
   <div class="screen">
@@ -87,6 +122,7 @@ export function bags(root: HTMLElement) {
         b.innerHTML = '<span class="spinner"></span>';
         try {
           const r = await call<number>('sell', { token_id: token, amount: 1 });
+          coinFlight(b, r.value);
           sound.cash();
           toast(`Sold for <b>${fmt(r.value)}</b> MI · ${txLink(r.hash)}`);
         } catch (e) {
@@ -103,6 +139,7 @@ export function bags(root: HTMLElement) {
         b.innerHTML = '<span class="spinner"></span>';
         try {
           const r = await call<number>('fill_order', { order_id: Number(b.dataset.fill), token_id: b.dataset.token, amount: 1 });
+          coinFlight(b, r.value);
           sound.cash();
           toast(`A rival paid you <b>${fmt(r.value)}</b> MI from escrow · ${txLink(r.hash)}`);
         } catch (e) {

@@ -58,6 +58,10 @@ function b64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
+export function publicKeyOf(id: Identity): string {
+  return KeyPair.fromString(id.key).getPublicKey().toString();
+}
+
 export function signLogin(id: Identity, nonce: string): string {
   const kp = KeyPair.fromString(id.key);
   return b64(kp.sign(new TextEncoder().encode(`final-call login ${nonce}`)).signature);

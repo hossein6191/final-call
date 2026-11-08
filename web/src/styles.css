@@ -319,3 +319,9 @@ a { color: var(--sign); }
 .callout-big.miss { background: var(--sign); color: var(--sign-ink); }
 .callout-big.dodge { background: var(--go); color: #022b14; }
 .callout-big small { display: block; font-family: var(--body); font-size: 13px; font-weight: 600; letter-spacing: 0; }
+
+.coin { position: fixed; left: 0; top: 0; width: 16px; height: 16px; border-radius: 8px; z-index: 60; pointer-events: none;
+  background: radial-gradient(circle at 35% 35%, #fff3b0, #ffd23f 45%, #b8901a); box-shadow: 0 0 8px rgba(255,210,63,.7); }
+.wallet .miles.bump { animation: bump .3s; }
+.rivals { margin-top: 18px; }
+.price { margin-top: 2px; }

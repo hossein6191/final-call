@@ -38,6 +38,7 @@ export function auction(root: HTMLElement, lotId: number) {
       <div class="chip tagchip" id="tagchip" hidden></div>
     </div>
     <div class="appraise" id="appraise"></div>
+    <div class="rivals" id="rivals"></div>
     <div class="price">
       <div class="callout" id="callout"></div>
       <div class="gavel" id="gavel">${GAVEL}</div>
@@ -46,7 +47,6 @@ export function auction(root: HTMLElement, lotId: number) {
       <div class="who" id="who">Opening bid</div>
       <div class="banner" id="banner"></div>
     </div>
-    <div class="rivals" id="rivals"></div>
     <div class="controls">
       <button class="btn side" id="jump" disabled>JUMP<small id="jumpv">+3 steps</small></button>
       <div class="bidwrap">
@@ -72,6 +72,7 @@ export function auction(root: HTMLElement, lotId: number) {
   let flash = 0;
   let freezeUntil = 0;
   let lastGeiger = 0;
+  let lastFrame = 0;
   let lockSlot: Slot | null = null;
   let lockSince = 0;
   const active = new Set<string>(); // bidders still in
@@ -169,6 +170,8 @@ export function auction(root: HTMLElement, lotId: number) {
 
   function draw(t: number) {
     raf = requestAnimationFrame(draw);
+    const dt = lastFrame ? Math.min(64, t - lastFrame) : 16;
+    lastFrame = t;
     if (!W || t < freezeUntil) return;
     g.clearRect(0, 0, W, H);
     // belt
@@ -213,7 +216,8 @@ export function auction(root: HTMLElement, lotId: number) {
       const elapsed = t - scanStart;
       ($('#scanfill', root) as HTMLElement).style.width = `${Math.min(100, (elapsed / scanMs) * 100)}%`;
       if (!dragging) {
-        beamX += beamDir * (W / 260);
+        // time-based so the sweep speed is the same at 30, 60 or 120 frames per second
+        beamX += beamDir * W * (dt / 1500);
         if (beamX > W * 0.95) beamDir = -1;
         if (beamX < W * 0.05) beamDir = 1;
       }
@@ -701,6 +705,9 @@ export function auction(root: HTMLElement, lotId: number) {
         for (let i = 0; i < covered.length; i++) covered[i] = true;
         for (const s of slots) s.revealed = true;
         showSold({ ...m, tier, flight: startMsg?.flight, sealedTx: startMsg?.sealedTx, me });
+        break;
+      case 'rival:offer':
+        toast(`<b>${esc(m.name)}</b> wants your ${esc(m.itemName)}: <b>${fmt(m.price)} MI</b>. Sell it to them in My Bags.`);
         break;
       case 'ai:voices':
         $('#aichip', root).innerHTML = m.source === 'near-ai' ? '<span class="chip">voices: NEAR AI</span>' : '<span class="chip">voices: scripted</span>';

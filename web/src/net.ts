@@ -1,5 +1,5 @@
 // REST helpers and the live auction socket.
-import { signLogin, type Identity } from './wallet.ts';
+import { signLogin, publicKeyOf, type Identity } from './wallet.ts';
 
 export async function api<T = any>(path: string, body?: object): Promise<T> {
   const res = await fetch(`/api${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
@@ -29,7 +29,7 @@ class Live {
     ws.onmessage = (ev) => {
       const m = JSON.parse(String(ev.data));
       if (m.type === 'hello' && this.id) {
-        ws.send(JSON.stringify({ type: 'auth', account: this.id.account, signature: signLogin(this.id, m.nonce) }));
+        ws.send(JSON.stringify({ type: 'auth', account: this.id.account, publicKey: publicKeyOf(this.id), signature: signLogin(this.id, m.nonce) }));
         return;
       }
       if (m.type === 'auth:ok') {

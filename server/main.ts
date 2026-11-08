@@ -7,7 +7,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { PublicKey } from 'near-api-js';
 import { cfg } from './config.ts';
 import { db, getBag, setBag, recentFeed, type BagRow } from './db.ts';
-import { house, panicMessage, txUrl, view } from './chain.ts';
+import { house, panicMessage, provider, txUrl, view } from './chain.ts';
 import { arrivals, claimBag, fillPool, sealTutorialBag, toPublic } from './bags.ts';
 import { Auction } from './auction.ts';
 import { economyTick, pickLineup, rivalWon, rivals, syncRivals } from './rivals.ts';
@@ -206,6 +206,24 @@ const server = createServer(async (req, res) => {
 
 // ---------- live auctions ----------
 
+/**
+ * A traveller the database doesn't know (say, after a host wiped the disk) is still recognized
+ * when the chain shows their key on their account and the contract has their profile.
+ */
+async function adoptFromChain(account: string, publicKey: string): Promise<any | null> {
+  if (!account.endsWith(`.${cfg.contract}`) || !publicKey) return null;
+  try {
+    const keys: any = await provider.viewAccessKeyList({ accountId: account } as any);
+    if (!keys.keys.some((k: any) => k.public_key === publicKey)) return null;
+    const p: any = await view('get_profile', { account_id: account });
+    if (!p || p.rival) return null;
+    db.prepare('INSERT OR IGNORE INTO players (account_id, nickname, public_key, created_tx, created_at) VALUES (?, ?, ?, ?, ?)').run(account, p.nickname, publicKey, null, Date.now());
+    return db.prepare('SELECT * FROM players WHERE account_id = ?').get(account);
+  } catch {
+    return null;
+  }
+}
+
 const streaks = new Map<string, { losses: number; wins: number }>();
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096 });
 
@@ -225,7 +243,8 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
     if (m.type === 'auth') {
-      const row = db.prepare('SELECT * FROM players WHERE account_id = ?').get(String(m.account ?? '')) as any;
+      let row = db.prepare('SELECT * FROM players WHERE account_id = ?').get(String(m.account ?? '')) as any;
+      if (!row) row = await adoptFromChain(String(m.account ?? ''), String(m.publicKey ?? ''));
       if (!row) return send({ type: 'auth:fail', reason: 'unknown traveller' });
       try {
         const ok = PublicKey.from(row.public_key).verify(new TextEncoder().encode(`final-call login ${nonce}`), Buffer.from(String(m.signature), 'base64'));
