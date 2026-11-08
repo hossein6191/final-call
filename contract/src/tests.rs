@@ -117,12 +117,16 @@ fn only_winner_pays() {
 }
 
 #[test]
-#[should_panic(expected = "winner cannot cover the price")]
+#[should_panic(expected = "not enough miles")]
 fn winner_must_afford() {
     let mut c = setup();
     seal(&mut c, 1);
     ctx(HOUSE, 3_000);
+    // The reveal still lands so the tag can be checked; payment is what fails.
     c.close_lot(1, Some(acc(ALICE)), 5_000, bag(), SALT.into());
+    assert_eq!(c.get_lot(1).unwrap().items, bag());
+    ctx(ALICE, 4_000);
+    c.pay_lot(1);
 }
 
 #[test]

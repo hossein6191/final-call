@@ -4,7 +4,7 @@
 import { AUCTION, increment, itemValue, parseItemToken, publicEstimate, type ManifestSlot } from '../shared/rules.ts';
 import { ITEM_BY_ID } from '../shared/catalog.ts';
 import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, type BagRow } from './db.ts';
-import { house, panicMessage, rival as rivalTx, txUrl } from './chain.ts';
+import { house, panicMessage, rival as rivalTx, txUrl, view } from './chain.ts';
 import { voiceRivals, scriptedLines, type Lines, type Voiced } from './ai.ts';
 import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
 
@@ -297,9 +297,13 @@ export class Auction {
     if (this.phase === 'done') return;
     this.phase = 'done';
     if (this.timer) clearInterval(this.timer);
-    for (const s of this.rivals) s.rival!.committed = Math.max(0, s.rival!.committed - s.max);
-
     const winner = this.leader;
+    // Release what each rival promised to this table; a winning rival keeps the price reserved
+    // until its payment lands.
+    for (const s of this.rivals) {
+      s.rival!.committed = Math.max(0, s.rival!.committed - s.max);
+      if (s === winner) s.rival!.committed += this.price;
+    }
     const items: string[] = JSON.parse(this.bag.items);
     const reveal = items.map(parseItemToken);
     this.send({
@@ -355,17 +359,21 @@ export class Auction {
       addFeed('lot', { id, tier: this.bag.tier, winner: winner?.id ?? null, name: winner?.name ?? null, price: winner ? this.price : 0, tx: tx.hash });
       if (winner === this.player) void this.collectorsWant(items);
       if (winner?.rival) {
+        const price = this.price;
         await rivalWon(winner.rival, id, (hash) => {
           setBag(id, { paid_tx: hash, status: 'paid' });
           this.send({ type: 'lot:paid', lotId: id, tx: hash, url: txUrl(hash), by: winner.id });
-        });
+        }).finally(() => (winner.rival!.committed = Math.max(0, winner.rival!.committed - price)));
       }
     } catch (e) {
       const msg = panicMessage(e);
       console.error(`lot ${id} settle failed:`, msg);
-      const row = getBag(id);
-      if (row && row.status === 'closing') setBag(id, { status: 'error' });
-      this.send({ type: 'lot:error', lotId: id, message: msg });
+      // The call may have landed even though we saw an error: trust the chain.
+      const lot: any = await view('get_lot', { id }).catch(() => null);
+      const map: Record<string, string> = { Open: 'closing', AwaitingPayment: 'awaiting_payment', Paid: 'paid', Unsold: 'unsold', Expired: 'expired' };
+      setBag(id, { status: lot ? map[lot.status] ?? 'error' : 'closing' });
+      if (lot?.status === 'AwaitingPayment' && lot.winner === this.player.id) this.send({ type: 'lot:revealed', lotId: id, tx: '', url: '' });
+      else this.send({ type: 'lot:error', lotId: id, message: msg });
     }
   }
 }

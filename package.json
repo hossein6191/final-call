@@ -9,7 +9,7 @@
     "dev": "node --watch server/main.ts",
     "start": "node server/main.ts",
     "build": "vite build web",
-    "test": "node --test 'test/*.test.ts'",
+    "test": "node --test test/*.test.ts",
     "verify": "node scripts/verify-lot.ts"
   },
   "engines": {

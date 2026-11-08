@@ -55,6 +55,7 @@ export async function sendCall<T = unknown>(
   methodName: string,
   args: object,
   tgas: number,
+  resigned = false,
 ): Promise<Sent<T>> {
   let signed: any = null;
   for (let attempt = 0; attempt < 3 && !signed; attempt++) {
@@ -74,6 +75,12 @@ export async function sendCall<T = unknown>(
   try {
     return parse<T>(await withTimeout(provider.sendTransactionUntil(signed, 'FINAL'), 25_000));
   } catch (e) {
+    // A stale cached nonce (another tab or process used this key): the tx was rejected,
+    // so refreshing the nonce and signing again cannot double-send.
+    if (!resigned && /InvalidNonce|nonce.*(too|lower|higher)/i.test(String((e as Error)?.message ?? e))) {
+      await (account as any).nonceManager?.invalidate?.(signed.transaction.publicKey, signed.transaction.nonceIndex);
+      return sendCall<T>(account, provider, contractId, methodName, args, tgas, true);
+    }
     if (isFinal(e)) throw e;
     lastErr = e;
   }

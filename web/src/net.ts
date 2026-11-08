@@ -16,13 +16,18 @@ class Live {
   private id: Identity | null = null;
   private ready: Promise<void> | null = null;
   private resolveReady: (() => void) | null = null;
+  private rejectReady: ((e: Error) => void) | null = null;
   authed = false;
 
   connect(id: Identity) {
     this.id = id;
     if (this.ws && this.ws.readyState <= 1) return this.ready!;
     this.authed = false;
-    this.ready = new Promise((r) => (this.resolveReady = r));
+    this.ready = new Promise((res, rej) => {
+      this.resolveReady = res;
+      this.rejectReady = rej;
+    });
+    this.ready.catch(() => {});
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
     this.ws = ws;
@@ -36,6 +41,7 @@ class Live {
         this.authed = true;
         this.resolveReady?.();
       }
+      if (m.type === 'auth:fail') this.rejectReady?.(new Error(m.reason ?? 'sign-in failed'));
       for (const h of this.handlers) h(m);
     };
     ws.onclose = () => {
@@ -52,7 +58,12 @@ class Live {
   }
 
   async send(m: object) {
-    if (!this.authed && this.id) await this.connect(this.id);
+    try {
+      if (!this.authed && this.id) await this.connect(this.id);
+    } catch (e) {
+      for (const h of this.handlers) h({ type: 'error', message: `Could not sign in: ${(e as Error).message}. Try again in a moment.` });
+      return;
+    }
     this.ws?.send(JSON.stringify(m));
   }
 }

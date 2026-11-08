@@ -497,8 +497,8 @@ impl FinalCall {
         match &winner {
             Some(w) => {
                 require!(price >= lot.opening, "price below opening bid");
-                let p = self.profiles.get(w).unwrap_or_else(|| env::panic_str("unknown winner"));
-                require!(p.miles >= price, "winner cannot cover the price");
+                // The reveal must always be possible; whether the winner can pay is checked in pay_lot.
+                require!(self.profiles.contains_key(w), "unknown winner");
                 lot.status = LotStatus::AwaitingPayment;
                 lot.winner = Some(w.clone());
                 lot.price = price;

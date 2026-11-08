@@ -33,8 +33,12 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
    → Miles arrive with a transaction link, and that item's dealer price drops for everyone (open **My Bags** again to see the lower price and the demand arrow).
 6. Open **BOARD**.
    → Players and rivals ranked by net worth read live from the contract, plus a feed of wins, rival sales, buy orders, loans and bankruptcies with transaction links.
-7. Open `#lot/<id>` for any lot (link in the Proof panel).
+7. On the Board, tap **SIMULATE A WEEK**.
+   → In under a second your browser runs 7 days of auctions (about 1,000 lots) between the six rivals and four bot players with the live rules, and draws everyone's net worth over the week: who went broke, the best flip, and how far dealer demand fell for popular items.
+8. Open `#lot/<id>` for any lot (link in the Proof panel).
    → The full tag check: the on-chain commitment, the revealed preimage, your browser's hash, the rivals' limits (computed from the X-ray only), and the NEAR AI signature on the rivals' lines.
+9. From a terminal, with no secrets: `npm run verify` (or `npm run verify -- <lot id>`).
+   → Reads the lot straight from the contract over public RPC, rebuilds the preimage, hashes it, and prints `match: YES` plus the contract's own `check_commitment` result.
 
 No setup is needed for any of this; the hosted game runs on NEAR testnet.
 
@@ -51,6 +55,14 @@ No setup is needed for any of this; the hosted game runs on NEAR testnet.
 | Players sign their own transactions in the browser (payments, sales, order fills) | `web/src/wallet.ts`, `shared/near-send.ts` |
 | Rival lines from NEAR AI Cloud (TEE model); the server checks the response signature and links NEAR AI's verifier | `server/ai.ts` |
 
+## What makes an auction feel like an auction
+
+- The bag rolls onto the belt with a story tag (route, weight, days unclaimed, sticker), then the X-ray switches on. Geiger-style clicks speed up over valuable items; holding the beam on one appraises it.
+- Rivals raise numbered paddles, twitch just before they bid, hesitate visibly near their limit, and fold with a line. A rival you keep beating remembers you and bids harder.
+- "Going once" and "going twice" bring a heartbeat that speeds from 90 to 140 BPM, faster ticks and a red vignette; a bid inside "going twice" is called out as a snipe, a long back-and-forth as a bidding war, and the last two bidders go head to head.
+- The hammer: hitstop, camera punch, gavel slam, SOLD stamp. Then the case opens, items arrive cheapest first, and the last sealed pouch gets a drumroll and slow motion. Lose to a rival and you see whether you missed a jackpot or dodged a bullet.
+- Collectors who lose a bag to you post an escrowed on-chain buy order for the piece they wanted.
+
 ## What is on chain and what is not
 
 - On chain: balances, items, every lot's commitment and reveal, who won and what they paid, dealer prices and demand, buy orders and escrow, loans and debt.
@@ -63,8 +75,9 @@ Requirements: Node 24+, Rust 1.95 (pinned by `contract/rust-toolchain.toml`), `c
 
 ```bash
 npm install
-npm test                                  # JS unit tests
+npm test                                  # 9 JS tests (commitment format, bags, X-ray privacy, simulator, signature recovery)
 (cd contract && cargo test)               # 14 contract unit tests
+node scripts/simulate.ts                  # the week fast-forward, in the terminal
 (cd contract && cargo near build non-reproducible-wasm)
 node scripts/init-args.ts <your-account>.testnet > init.json
 near contract deploy <your-account>.testnet use-file contract/target/near/final_call.wasm with-init-call new file-args init.json prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config testnet sign-with-legacy-keychain send

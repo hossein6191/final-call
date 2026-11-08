@@ -714,7 +714,7 @@ export function auction(root: HTMLElement, lotId: number) {
         break;
       case 'ai:verified':
         $('#aichip', root).innerHTML = m.ok
-          ? `<a class="chip ok" href="${m.verifyUrl}" target="_blank" rel="noopener">✓ voices signed in TEE</a>`
+          ? `<a class="chip ok" href="${esc(m.verifyUrl)}" target="_blank" rel="noopener">✓ voices signed by NEAR AI TEE key</a>`
           : `<span class="chip warn">voices unverified</span>`;
         break;
       case 'error':

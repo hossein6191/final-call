@@ -232,7 +232,7 @@ export function showSold(m: any) {
   const off = live.on(async (x) => {
     if (x.lotId !== m.lotId) return;
     if (x.type === 'lot:revealed') {
-      $('#v-chain', el).innerHTML = `<i>✅</i><span>Revealed on chain; the contract re-checked the hash · ${txLink(x.tx)}</span>`;
+      $('#v-chain', el).innerHTML = `<i>✅</i><span>Revealed on chain; the contract re-checked the hash${x.tx ? ` · ${txLink(x.tx)}` : ""}</span>`;
       if (won) {
         try {
           const paid = await call<string[]>('pay_lot', { id: m.lotId });

@@ -24,9 +24,11 @@ export const state = {
 export const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 export const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 export const short = (h: string, n = 6) => (h ? `${h.slice(0, n)}…${h.slice(-4)}` : '');
-export const txLink = (hash: string, label = short(hash)) => `<a href="${state.cfg!.explorer}/txns/${hash}" target="_blank" rel="noopener">${label}</a>`;
-export const accLink = (acc: string, label = acc) => `<a href="${state.cfg!.explorer}/address/${acc}" target="_blank" rel="noopener">${label}</a>`;
-export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export const esc = (s: string) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export const txLink = (hash: string, label = short(hash)) =>
+  `<a href="${esc(`${state.cfg!.explorer}/txns/${encodeURIComponent(hash)}`)}" target="_blank" rel="noopener">${esc(label)}</a>`;
+export const accLink = (acc: string, label = acc) =>
+  `<a href="${esc(`${state.cfg!.explorer}/address/${encodeURIComponent(acc)}`)}" target="_blank" rel="noopener">${esc(label)}</a>`;
 
 export function toast(html: string) {
   const el = document.createElement('div');

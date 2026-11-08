@@ -54,7 +54,13 @@ function dealerValue(token: string, demand: Map<string, number>): number {
 let boardCache: { at: number; body: any } = { at: 0, body: null };
 async function board() {
   if (Date.now() - boardCache.at < 5000 && boardCache.body) return boardCache.body;
-  const [profiles, rows] = await Promise.all([view<any[]>('profiles', { from_index: 0, limit: 100 }), market()]);
+  const profiles: any[] = [];
+  for (let from = 0; from < 1000; from += 100) {
+    const page = await view<any[]>('profiles', { from_index: from, limit: 100 });
+    profiles.push(...page);
+    if (page.length < 100) break;
+  }
+  const rows = await market();
   const demand = new Map(rows.map((m: any) => [m.item_id, m.demand_bp]));
   const people = profiles
     .filter((p) => !p.account_id.startsWith('e2e-'))
@@ -75,6 +81,14 @@ async function board() {
 // ---------- joining ----------
 
 const joinsByIp = new Map<string, number[]>();
+let globalJoins: number[] = [];
+function allowGlobalJoin(): boolean {
+  const now = Date.now();
+  globalJoins = globalJoins.filter((t) => now - t < 3_600_000);
+  if (globalJoins.length >= Number(process.env.JOIN_GLOBAL_LIMIT ?? 150)) return false;
+  globalJoins.push(now);
+  return true;
+}
 function allowJoin(ip: string): boolean {
   const now = Date.now();
   const list = (joinsByIp.get(ip) ?? []).filter((t) => now - t < 3_600_000);
@@ -94,8 +108,11 @@ async function handleJoin(req: IncomingMessage, res: ServerResponse) {
   } catch {
     return json(res, 400, { error: 'Bad public key.' });
   }
-  const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
-  if (!allowJoin(ip)) return json(res, 429, { error: 'Too many new travellers from here. Try again later.' });
+  // Behind a trusted proxy (TRUST_PROXY=1) the client is the last address the proxy appended;
+  // otherwise the socket address. A client-sent first hop is never trusted.
+  const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const ip = process.env.TRUST_PROXY === '1' && fwd.length ? fwd[fwd.length - 1] : String(req.socket.remoteAddress ?? '');
+  if (!allowJoin(ip) || !allowGlobalJoin()) return json(res, 429, { error: 'Too many new travellers right now. Try again later.' });
 
   const slug = nickname.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '').slice(0, 14) || 'guest';
   const sub = `${slug}-${randomBytes(2).toString('hex')}`;
@@ -138,11 +155,11 @@ async function markPaidIfPaid(id: number) {
 // ---------- HTTP ----------
 
 async function serveStatic(req: IncomingMessage, res: ServerResponse) {
-  const url = new URL(req.url ?? '/', 'http://x');
-  let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
-  if (path === '/' || !extname(path)) path = '/index.html';
-  const file = join(STATIC_DIR, path);
   try {
+    const url = new URL(req.url ?? '/', 'http://x');
+    let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
+    if (path === '/' || !extname(path)) path = '/index.html';
+    const file = join(STATIC_DIR, path);
     const s = await stat(file);
     if (!s.isFile()) throw new Error('not a file');
     res.writeHead(200, {
@@ -193,11 +210,12 @@ const server = createServer(async (req, res) => {
       const id = Number(paidMatch[1]);
       const body = await readBody(req);
       const status = await markPaidIfPaid(id);
-      if (status === 'Paid' && body.tx) setBag(id, { paid_tx: String(body.tx).slice(0, 64) });
+      const tx = String(body.tx ?? '');
+      if (status === 'Paid' && /^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(tx) && !getBag(id)?.paid_tx) setBag(id, { paid_tx: tx });
       return json(res, 200, { status });
     }
     if (p.startsWith('/api/')) return json(res, 404, { error: 'not found' });
-    return serveStatic(req, res);
+    return await serveStatic(req, res);
   } catch (e) {
     console.error(p, e);
     return json(res, 500, { error: panicMessage(e) });
@@ -225,6 +243,7 @@ async function adoptFromChain(account: string, publicKey: string): Promise<any |
 }
 
 const streaks = new Map<string, { losses: number; wins: number }>();
+const liveByAccount = new Map<string, Auction | 'pending'>();
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096 });
 
 wss.on('connection', (ws: WebSocket) => {
@@ -235,7 +254,8 @@ wss.on('connection', (ws: WebSocket) => {
   const send = (m: object) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   send({ type: 'hello', nonce });
 
-  ws.on('message', async (raw) => {
+  ws.on('message', (raw) => void onMessage(raw).catch((e) => console.error('ws message', panicMessage(e))));
+  const onMessage = async (raw: unknown) => {
     let m: any;
     try {
       m = JSON.parse(String(raw));
@@ -259,10 +279,23 @@ wss.on('connection', (ws: WebSocket) => {
     if (!account) return send({ type: 'error', message: 'sign in first' });
 
     if (m.type === 'enter') {
-      if (auction && auction.phase !== 'done') return send({ type: 'error', message: 'already in an auction' });
+      const busy = liveByAccount.get(account);
+      if (busy && (busy === 'pending' || busy.phase !== 'done')) return send({ type: 'error', message: 'You are already at an auction.' });
+      const unpaid = db.prepare("SELECT COUNT(*) AS n FROM bags WHERE winner = ? AND status IN ('closing','awaiting_payment')").get(account) as { n: number };
+      if (unpaid.n > 0) return send({ type: 'error', message: 'Pay for the bag you won first (My Bags).' });
+      liveByAccount.set(account, 'pending');
       const bag = claimBag(Number(m.lotId), account);
-      if (!bag) return send({ type: 'error', message: 'That bag is gone. Pick another.' });
+      if (!bag) {
+        liveByAccount.delete(account);
+        return send({ type: 'error', message: 'That bag is gone. Pick another.' });
+      }
+      try {
       const profile: any = await view('get_profile', { account_id: account });
+      if ((profile?.strikes ?? 0) >= 3) {
+        setBag(bag.id, { status: 'ready' });
+        liveByAccount.delete(account);
+        return send({ type: 'error', message: 'Too many unpaid bags. The auction house has banned you for now.' });
+      }
       const pendingRow = db.prepare("SELECT COALESCE(SUM(price),0) AS s FROM bags WHERE winner = ? AND status IN ('closing','awaiting_payment')").get(account) as { s: number };
       const miles = Math.max(0, (profile?.miles ?? 0) - pendingRow.s);
       const tier = TERMINALS[bag.tier];
@@ -271,11 +304,13 @@ wss.on('connection', (ws: WebSocket) => {
         const worth = (profile?.miles ?? 0) + (profile?.inventory ?? []).reduce((s: number, [t, n]: [string, number]) => s + dealerValue(t, demand) * n, 0) - (profile?.debt ?? 0);
         if (worth < tier.unlockNetWorth) {
           setBag(bag.id, { status: 'ready' });
+          liveByAccount.delete(account);
           return send({ type: 'error', message: `${tier.name} opens at ${tier.unlockNetWorth.toLocaleString('en-US')} net worth.` });
         }
       }
       if (miles < bag.opening) {
         setBag(bag.id, { status: 'ready' });
+        liveByAccount.delete(account);
         return send({ type: 'error', message: 'Not enough miles for the opening bid. Sell something first.' });
       }
       const st = streaks.get(account) ?? { losses: 0, wins: 0 };
@@ -287,12 +322,19 @@ wss.on('connection', (ws: WebSocket) => {
         boardCache.at = 0;
         void fillPool();
       });
+      liveByAccount.set(account, auction);
       auction.start();
+      } catch (e) {
+        console.error('enter failed', panicMessage(e));
+        if (getBag(bag.id)?.status === 'auction') setBag(bag.id, { status: 'ready' });
+        liveByAccount.delete(account);
+        send({ type: 'error', message: 'The belt jammed. Try that bag again.' });
+      }
       return;
     }
     if (m.type === 'bid' || m.type === 'jump') return auction?.playerBid(m.type);
     if (m.type === 'fold') return auction?.playerFold();
-  });
+  };
 
   ws.on('close', () => {
     // A player who leaves mid-auction simply stops bidding; the hammer still falls.
@@ -317,10 +359,19 @@ async function reconcile() {
   }
 }
 
+const rivalPaying = new Set<number>();
 /** After a restart: put interrupted auctions back on the board and finish half-settled lots. */
-async function recover() {
-  db.prepare("UPDATE bags SET status = 'ready' WHERE status = 'auction'").run();
-  const rows = db.prepare("SELECT * FROM bags WHERE status IN ('closing','error') AND closed_at IS NOT NULL").all() as unknown as BagRow[];
+async function recover(startup = false) {
+  if (startup) db.prepare("UPDATE bags SET status = 'ready' WHERE status = 'auction'").run();
+  const sealing = db.prepare("SELECT id FROM bags WHERE status = 'sealing' AND created_at < ?").all(Date.now() - 90_000) as { id: number }[];
+  for (const r of sealing) {
+    const lot: any = await view('get_lot', { id: r.id }).catch(() => undefined);
+    if (lot === undefined) continue;
+    setBag(r.id, { status: lot ? 'ready' : 'error' });
+  }
+  const rows = db
+    .prepare("SELECT * FROM bags WHERE (status IN ('closing','error') OR (status = 'awaiting_payment' AND winner LIKE ?)) AND closed_at IS NOT NULL AND closed_at < ?")
+    .all(`%.${cfg.contract}`, Date.now() - 60_000) as unknown as BagRow[];
   for (const r of rows) {
     try {
       const lot: any = await view('get_lot', { id: r.id });
@@ -332,8 +383,9 @@ async function recover() {
       else if (lot?.status === 'Unsold') setBag(r.id, { status: 'unsold' });
       const sub = RIVALS.find((d) => `${d.sub}.${cfg.contract}` === r.winner)?.sub;
       const after: any = await view('get_lot', { id: r.id });
-      if (sub && after?.status === 'AwaitingPayment') {
-        await rivalWon(rivals.get(sub)!, r.id, (hash) => setBag(r.id, { paid_tx: hash, status: 'paid' }));
+      if (sub && after?.status === 'AwaitingPayment' && !rivalPaying.has(r.id)) {
+        rivalPaying.add(r.id);
+        await rivalWon(rivals.get(sub)!, r.id, (hash) => setBag(r.id, { paid_tx: hash, status: 'paid' })).finally(() => rivalPaying.delete(r.id));
       }
     } catch (e) {
       console.error('recover', r.id, panicMessage(e));
@@ -341,13 +393,16 @@ async function recover() {
   }
 }
 
+process.on('unhandledRejection', (e) => console.error('unhandled rejection', panicMessage(e)));
+process.on('uncaughtException', (e) => console.error('uncaught exception', panicMessage(e)));
+
 server.listen(cfg.port, async () => {
   console.log(`Final Call on http://localhost:${cfg.port} (contract ${cfg.contract})`);
   await syncRivals().catch((e) => console.error('sync rivals', panicMessage(e)));
-  await recover();
+  await recover(true);
   await fillPool().catch((e) => console.error('fill pool', panicMessage(e)));
   setInterval(() => void fillPool().catch(() => {}), 20_000);
   setInterval(() => void economyTick().catch((e) => console.error('economy', panicMessage(e))), 60_000);
-  setInterval(() => void reconcile(), 30_000);
+  setInterval(() => void reconcile().then(() => recover(false)).catch((e) => console.error('recover', panicMessage(e))), 30_000);
 });
 
