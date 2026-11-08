@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "node --watch server/main.ts",
     "start": "node server/main.ts",
-    "build": "vite build web",
+    "build": "vite build --config web/vite.config.ts",
     "test": "node --test test/*.test.ts",
     "verify": "node scripts/verify-lot.ts"
   },
