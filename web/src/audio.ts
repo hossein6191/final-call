@@ -100,9 +100,11 @@ export const sound = {
     tone(990, 0.6, { type: 'sine', gain: 0.1, at: 0.18 });
   },
   gavel() {
-    tone(110, 0.25, { type: 'sine', gain: 0.6, slide: 55 });
-    noise(0.08, { freq: 1800, q: 2, gain: 0.5 });
-    tone(220, 0.08, { type: 'square', gain: 0.08 });
+    noise(0.03, { freq: 1800, q: 2, gain: 0.6 });
+    tone(80, 0.15, { type: 'sine', gain: 0.7, slide: 50 });
+    tone(220, 0.06, { type: 'square', gain: 0.06 });
+    // room tail
+    noise(0.6, { at: 0.02, freq: 700, q: 0.5, type: 'lowpass', gain: 0.12 });
   },
   sold(win: boolean) {
     this.gavel();
@@ -226,7 +228,81 @@ export function crowdSwell(amount = 1) {
   crowd.gain.gain.linearRampToValueAtTime(0.05, t + 1.2);
 }
 
+// ---------- the chant ----------
+// Auctioneer patter as formant-filtered syllables on a 150 BPM eighth-note grid. It carries the
+// rhythm; the numbers are on screen. (Spoken words are kept for "going once/twice/sold".)
+let chantTimer: number | null = null;
+let chantStep = 0;
+function syllable(pitch: number, vowel: number, at = 0) {
+  if (!ctx) return;
+  const t = ctx.currentTime + at;
+  const o = ctx.createOscillator();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(pitch, t);
+  o.frequency.linearRampToValueAtTime(pitch * 0.94, t + 0.08);
+  const formants = [
+    [700, 1200], // ah
+    [400, 2000], // ee
+    [500, 900], // oh
+    [600, 1700], // eh
+  ][vowel % 4];
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.14, t + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.085);
+  for (const f of formants) {
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = f;
+    bp.Q.value = 6;
+    o.connect(bp).connect(g);
+  }
+  g.connect(sfx);
+  o.start(t);
+  o.stop(t + 0.1);
+}
+export function chant(on: boolean, heat = 0) {
+  if (!ctx) return;
+  if (!on) {
+    if (chantTimer !== null) clearInterval(chantTimer);
+    chantTimer = null;
+    return;
+  }
+  if (chantTimer !== null) return;
+  chantStep = 0;
+  const base = 150 + heat * 12;
+  chantTimer = window.setInterval(() => {
+    // phrases of 6 syllables with a pitch glide, a rest every 8 steps
+    const pos = chantStep % 8;
+    if (pos < 6) syllable(base * Math.pow(2, (Math.random() * 4 - 2 + pos * 0.5) / 12), Math.floor(Math.random() * 4));
+    chantStep++;
+  }, 200);
+}
+
 export const tension = {
+  geiger(rate: number) {
+    // one tick; the caller decides how often (4-20 per second)
+    noise(0.004, { freq: 2000 + rate * 100, q: 3, gain: 0.35 });
+  },
+  lock() {
+    tone(1100, 0.06, { type: 'sine', gain: 0.12 });
+    tone(1650, 0.08, { type: 'sine', gain: 0.08, at: 0.05 });
+  },
+  count(step: number) {
+    // rising notes as a number counts up (C D E F G ...)
+    const scale = [523, 587, 659, 698, 784, 880, 988, 1047];
+    tone(scale[step % scale.length] * (step >= scale.length ? 2 : 1), 0.05, { type: 'triangle', gain: 0.06 });
+  },
+  drumroll(ms: number) {
+    for (let t = 0; t < ms / 1000; t += 0.045) noise(0.04, { at: t, freq: 900, q: 0.8, gain: 0.12 + (t / (ms / 1000)) * 0.2 });
+  },
+  deflate() {
+    tone(420, 0.6, { type: 'sawtooth', gain: 0.07, slide: 110 });
+  },
+  ooh() {
+    noise(0.7, { freq: 520, q: 2.5, gain: 0.25 });
+    tone(220, 0.6, { type: 'sine', gain: 0.05, slide: 260 });
+  },
   tick(fast: boolean) {
     tone(fast ? 1800 : 1400, 0.03, { type: 'square', gain: fast ? 0.07 : 0.05 });
   },

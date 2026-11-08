@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { cfg } from './config.ts';
 import { db, getBag, nextLotId, setBag, addFeed, type BagRow } from './db.ts';
 import { house, panicMessage } from './chain.ts';
+import { ITEM_BY_ID } from '../shared/catalog.ts';
 import {
   TERMINALS, commitmentPreimage, itemToken, makeRng, openingBid, publicManifest, rollBag,
   type BagItem, type ManifestSlot,
@@ -19,7 +20,12 @@ export interface Flight {
   origin: string;
   carousel: number;
   days: number; // days unclaimed
+  kg: number; // total weight on the belt scale (public, like the X-ray)
+  sticker: string | null;
 }
+
+const KG = { organic: 0.6, plastic: 0.4, metal: 1.1, dense: 1.8 } as const;
+const STICKERS = ['FRAGILE', 'HEAVY', 'PRIORITY', 'LAST MINUTE', 'HANDLE WITH CARE', null, null];
 
 export interface PublicBag {
   id: number;
@@ -36,12 +42,15 @@ export interface PublicBag {
   manifest?: ManifestSlot[];
 }
 
-function newFlight(): Flight {
+function newFlight(manifest: ManifestSlot[], items: BagItem[]): Flight {
+  const kg = 3.2 + items.reduce((s, it) => s + KG[ITEM_BY_ID[it.id].material], 0) + manifest.filter((m) => m.pouch).length * 0.2;
   return {
     code: `FC ${randomInt(100, 999)}`,
     origin: ORIGINS[randomInt(ORIGINS.length)],
     carousel: randomInt(1, 13),
     days: randomInt(30, 120),
+    kg: Math.round(kg * 10) / 10,
+    sticker: STICKERS[randomInt(STICKERS.length)],
   };
 }
 
@@ -57,7 +66,7 @@ function makeBag(tier: number, opts: { tutorial?: boolean; reservedFor?: string 
     items: JSON.stringify(items.map(itemToken)),
     salt, commitment,
     manifest: JSON.stringify(manifest),
-    flight: JSON.stringify(newFlight()),
+    flight: JSON.stringify(newFlight(manifest, items)),
     opening: opts.tutorial ? 50 : openingBid(tier),
     status: 'sealing',
     reserved_for: opts.reservedFor ?? null,

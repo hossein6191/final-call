@@ -3,7 +3,7 @@
 // and the winner pays with their own key.
 import { AUCTION, increment, parseItemToken, publicEstimate, type ManifestSlot } from '../shared/rules.ts';
 import { ITEM_BY_ID } from '../shared/catalog.ts';
-import { getBag, setBag, addFeed, type BagRow } from './db.ts';
+import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, type BagRow } from './db.ts';
 import { house, panicMessage, txUrl } from './chain.ts';
 import { voiceRivals, scriptedLines, type Lines, type Voiced } from './ai.ts';
 import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
@@ -26,6 +26,8 @@ interface Seat {
   planAt: number | null;
   planJump: boolean;
   jumped: boolean;
+  twitched: boolean;
+  grudge: number; // bags this player has taken off this rival
 }
 
 export interface AuctionResult {
@@ -74,17 +76,20 @@ export class Auction {
     this.bag = bag;
     this.manifest = JSON.parse(bag.manifest);
     this.playerMiles = player.miles;
-    this.player = { id: player.account, name: player.nickname, max: 0, estimate: 0, folded: false, bids: 0, planAt: null, planJump: false, jumped: false };
+    this.player = { id: player.account, name: player.nickname, max: 0, estimate: 0, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: 0 };
     this.seats = [this.player];
     const tutorial = Boolean(bag.reserved_for);
     for (const r of tutorial ? lineup.slice(0, 2) : lineup) {
       const plan = planFor(r, this.manifest, bag.tier);
       // The first bag teaches the payoff: two rivals who give up around half its value.
       if (tutorial) plan.max = Math.min(plan.max, Math.floor((publicEstimate(this.manifest, bag.tier) * 0.45) / 10) * 10);
+      // Grudges: a rival you keep beating pushes 10% harder against you.
+      const mem = rivalryOf(player.account, r.account);
+      if (!tutorial && mem.player_wins >= 2) plan.max = Math.floor((plan.max * 1.1) / 10) * 10;
       r.committed += plan.max;
-      this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false });
+      this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: mem.player_wins });
     }
-    this.voiced = { source: 'scripted', lines: scriptedLines(lineup.map((r) => r.def)) };
+    this.voiced = { source: 'scripted', lines: scriptedLines(lineup.map((r) => r.def), player.nickname) };
   }
 
   get rivals() {
@@ -94,7 +99,16 @@ export class Auction {
   start() {
     const lineup = this.rivals.map((s) => s.rival!.def);
     // Ask NEAR AI for the rivals' lines during the scan; scripted lines cover any delay.
-    voiceRivals(lineup, xrayText(this.manifest)).then((v) => {
+    const memory = this.rivals
+      .map((s) => {
+        const m = rivalryOf(this.player.id, s.id);
+        if (m.player_wins) return `${s.rival!.def.sub} has lost ${m.player_wins} bag(s) to ${this.player.name} and holds a grudge`;
+        if (m.rival_wins) return `${s.rival!.def.sub} has beaten ${this.player.name} ${m.rival_wins} time(s) and is smug about it`;
+        return '';
+      })
+      .filter(Boolean)
+      .join('; ');
+    voiceRivals(lineup, xrayText(this.manifest), this.player.name, memory).then((v) => {
       this.voiced = v;
       v.verification?.then((ver) => {
         setBag(this.bag.id, { ai: JSON.stringify({ source: v.source, completionId: v.completionId, verification: ver, error: v.error ?? null }) });
@@ -118,7 +132,7 @@ export class Auction {
       scanMs: SCAN_MS,
       arriveMs: ARRIVE_MS,
       appraisal: publicEstimate(this.manifest, this.bag.tier),
-      rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, sub: s.rival!.def.sub, color: s.rival!.def.color, title: s.rival!.def.title, miles: s.rival!.miles })),
+      rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, sub: s.rival!.def.sub, color: s.rival!.def.color, title: s.rival!.def.title, miles: s.rival!.miles, grudge: s.grudge })),
       you: { miles: this.playerMiles },
     });
     setTimeout(() => this.goLive(), SCAN_MS);
@@ -161,7 +175,10 @@ export class Auction {
     this.lastBidAt = Date.now();
     this.calls = 0;
     s.bids++;
-    for (const x of this.seats) x.planAt = null;
+    for (const x of this.seats) {
+      x.planAt = null;
+      x.twitched = false;
+    }
     const l = this.linesFor(s);
     const line = l ? (s.bids === 1 ? l.open : Math.random() < 0.4 ? l.raise : undefined) : undefined;
     this.send({ type: 'auction:bid', by: s.id, name: s.name, price: amount, jump, line, next: this.nextPrice(), heat: this.heat(), snipe, war: this.war, outbid: prevLeader?.id ?? null });
@@ -257,6 +274,10 @@ export class Auction {
         s.planJump = p.jump;
         // A long pause is a real tell: this rival is close to their limit.
         if (p.at - now > 900 && s.rival!.def.style !== 'expert') this.send({ type: 'auction:think', by: s.id });
+      } else if (!s.twitched && s.planAt - now < 450) {
+        // the paddle twitches just before a bid
+        s.twitched = true;
+        this.send({ type: 'auction:twitch', by: s.id });
       } else if (now >= s.planAt) {
         let amount = next;
         if (s.planJump) {
@@ -294,6 +315,10 @@ export class Auction {
       commitment: this.bag.commitment,
       rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, estimate: s.estimate, max: s.max, folded: s.folded })),
     });
+    for (const s of this.rivals) {
+      if (winner === this.player) bumpRivalry(this.player.id, s.id, true);
+      else if (winner === s) bumpRivalry(this.player.id, s.id, false);
+    }
     setBag(this.bag.id, { status: 'closing', winner: winner?.id ?? null, price: winner ? this.price : 0, closed_at: Date.now(), banter: JSON.stringify(this.voiced.lines) });
     this.onDone({ lotId: this.bag.id, winner: winner?.id ?? null, winnerName: winner?.name ?? null, price: winner ? this.price : 0, playerWon: winner === this.player });
     void this.settle(winner, items);

@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS feed (
   data TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS rivalry (
+  player TEXT NOT NULL,
+  rival TEXT NOT NULL,
+  player_wins INTEGER NOT NULL DEFAULT 0, -- bags the player took with this rival at the table
+  rival_wins INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (player, rival)
+);
 `);
 
 export interface BagRow {
@@ -97,4 +104,15 @@ export function nextLotId(): number {
   const next = row ? Number(row.v) : Math.floor(Date.now() / 1000);
   db.prepare("INSERT INTO meta (k, v) VALUES ('next_lot', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(String(next + 1));
   return next;
+}
+
+export function rivalryOf(player: string, rival: string): { player_wins: number; rival_wins: number } {
+  return (db.prepare('SELECT player_wins, rival_wins FROM rivalry WHERE player = ? AND rival = ?').get(player, rival) as any) ?? { player_wins: 0, rival_wins: 0 };
+}
+
+export function bumpRivalry(player: string, rival: string, playerWon: boolean) {
+  db.prepare(
+    `INSERT INTO rivalry (player, rival, player_wins, rival_wins) VALUES (?, ?, ?, ?)
+     ON CONFLICT(player, rival) DO UPDATE SET player_wins = player_wins + excluded.player_wins, rival_wins = rival_wins + excluded.rival_wins`,
+  ).run(player, rival, playerWon ? 1 : 0, playerWon ? 0 : 1);
 }

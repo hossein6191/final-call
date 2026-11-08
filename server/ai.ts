@@ -66,11 +66,14 @@ const SCRIPTED: Record<RivalDef['style'], Lines[]> = {
   ],
 };
 
-export function scriptedLines(lineup: RivalDef[]): Record<string, Lines> {
+export function scriptedLines(lineup: RivalDef[], player = '', memory = ''): Record<string, Lines> {
   return Object.fromEntries(
     lineup.map((r) => {
       const pool = SCRIPTED[r.style];
-      return [r.sub, pool[Math.floor(Math.random() * pool.length)]];
+      const l = { ...pool[Math.floor(Math.random() * pool.length)] };
+      if (memory.includes(`${r.sub} has lost`)) l.open = player ? `You again, ${player}? Not this time.` : 'You again? Not this time.';
+      else if (memory.includes(`${r.sub} has beaten`)) l.open = player ? `Back for more, ${player}?` : 'Back for more?';
+      return [r.sub, l];
     }),
   );
 }
@@ -155,8 +158,8 @@ export async function verifyCompletion(id: string, model: string, requestBody: s
  * Asks NEAR AI for every rival's lines in one call. The prompt only contains what the X-ray
  * shows, never the sealed contents, so the request hash proves the rivals bid blind.
  */
-export async function voiceRivals(lineup: RivalDef[], xray: string): Promise<Voiced> {
-  if (!cfg.nearAiKey) return { source: 'scripted', lines: scriptedLines(lineup), error: 'no NEAR AI key' };
+export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'the newcomer', memory = ''): Promise<Voiced> {
+  if (!cfg.nearAiKey) return { source: 'scripted', lines: scriptedLines(lineup, player, memory), error: 'no NEAR AI key' };
   const people = lineup.map((r) => `- ${r.sub}: ${r.name}, ${r.title}. Voice: ${r.voice}.`).join('\n');
   const body = JSON.stringify({
     model: cfg.nearAiModel,
@@ -171,7 +174,7 @@ export async function voiceRivals(lineup: RivalDef[], xray: string): Promise<Voi
       },
       {
         role: 'user',
-        content: `The X-ray of the bag shows: ${xray}\nRivals:\n${people}\nReturn {"<sub>": {"open": "...", "raise": "...", "fold": "...", "win": "..."}} for every rival sub above.`,
+        content: `The X-ray of the bag shows: ${xray}\nThe human bidder is called ${player}.${memory ? ` History: ${memory}. Let it show in their lines.` : ''}\nRivals:\n${people}\nReturn {"<sub>": {"open": "...", "raise": "...", "fold": "...", "win": "..."}} for every rival sub above.`,
       },
     ],
   });

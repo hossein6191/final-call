@@ -126,11 +126,13 @@ export function showSold(m: any) {
     }
   };
 
-  const ticker = (el: HTMLElement, to: number, ms: number) => {
+  const ticker = (el: HTMLElement, to: number, ms: number, notes = 0) => {
     const t0 = performance.now();
+    let played = 0;
     const step = (t: number) => {
       const k = Math.min(1, (t - t0) / ms);
       el.textContent = fmt(to * (1 - Math.pow(1 - k, 3)));
+      while (played < notes && k >= played / notes) tension.count(played++);
       if (k < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
@@ -143,7 +145,8 @@ export function showSold(m: any) {
     const value = valueOf(it.id, it.cond, demand.get(it.id) ?? 10000);
     t.className = `item in pop r-${RARITY_NAMES[rar]}`;
     t.innerHTML = `${iconSvg(it.id)}<div class="nm">${esc(ITEM_BY_ID[it.id].name)}</div><div class="val">0</div><div class="cond">${it.cond} · ${RARITY_NAMES[rar]}</div>`;
-    ticker(t.querySelector('.val') as HTMLElement, value, 260 + rar * 140);
+    // count-up length grows with value (log scale), rarer items get more rising notes
+    ticker(t.querySelector('.val') as HTMLElement, value, Math.min(1500, 150 + Math.log10(Math.max(10, value)) * 300), rar >= 2 ? 3 + rar : 0);
     total += value;
     sound.pop(rar);
     if (rar >= 3) buzz(rar >= 4 ? [80, 40, 160] : 50);
@@ -160,13 +163,20 @@ export function showSold(m: any) {
     const t = tiles[i];
     if (!t.classList.contains('pouch')) return;
     const rar = rarityOf(items[i].id, m.tier);
-    const wait = [320, 420, 650, 900, 1300][rar];
+    const last = tiles.filter((x) => x.classList.contains('pouch')).length === 1;
+    // The last pouch decides the bag: drumroll, slow motion, longer hold.
+    const wait = last ? Math.max(1400, [320, 420, 650, 900, 1300][rar] + 900) : [320, 420, 650, 900, 1300][rar];
     t.classList.remove('pouch');
-    t.classList.add('wobble', `tell-${RARITY_NAMES[rar]}`);
+    t.classList.add(last ? 'slowmo' : 'wobble', `tell-${RARITY_NAMES[rar]}`);
     t.style.setProperty('--wobble', `${wait}ms`);
-    tension.rise(rar);
+    if (last) tension.drumroll(wait);
+    else tension.rise(rar);
     sound.crack();
-    setTimeout(() => revealTile(i), wait);
+    setTimeout(() => {
+      revealTile(i);
+      if (last && won) setTimeout(() => (total < m.price ? tension.deflate() : null), 500);
+      if (last && !won) setTimeout(verdict, 500);
+    }, wait);
   };
 
   const rays = () => {
@@ -176,8 +186,23 @@ export function showSold(m: any) {
     setTimeout(() => r.remove(), 1800);
   };
 
-  const pouchIdx = items.map((it, i) => (it.pouch ? i : -1)).filter((i) => i >= 0);
-  const visIdx = items.map((it, i) => (!it.pouch ? i : -1)).filter((i) => i >= 0);
+  const worth = (i: number) => valueOf(items[i].id, items[i].cond);
+  const pouchIdx = items.map((it, i) => (it.pouch ? i : -1)).filter((i) => i >= 0).sort((a, b) => worth(a) - worth(b));
+  const visIdx = items.map((it, i) => (!it.pouch ? i : -1)).filter((i) => i >= 0).sort((a, b) => worth(a) - worth(b));
+
+  // When a rival wins: was it a jackpot you missed, or a bullet you dodged?
+  const verdict = () => {
+    if (!m.winner || won) return;
+    const best = items.map((it, i) => ({ it, v: valueOf(it.id, it.cond, demand.get(it.id) ?? 10000), i })).sort((a, b) => b.v - a.v)[0];
+    const diff = total - m.price;
+    const box = $('#summary', el);
+    box.className = '';
+    box.innerHTML =
+      diff >= 0
+        ? `<div class="callout-big miss">MISSED A JACKPOT<small>${esc(m.winnerName)} paid ${fmt(m.price)} and found ${esc(ITEM_BY_ID[best.it.id].name)} (${fmt(best.v)}). +${fmt(diff)} for them.</small></div>`
+        : `<div class="callout-big dodge">DODGED A BULLET<small>${esc(m.winnerName)} paid ${fmt(m.price)} for ${fmt(total)} of goods. −${fmt(-diff)} for them.</small></div>`;
+    diff >= 0 ? tension.sniped() : sound.breakEven();
+  };
   loadDemand().then((d) => {
     demand = d;
     setTimeout(() => {
@@ -194,18 +219,11 @@ export function showSold(m: any) {
         all.hidden = false;
         all.onclick = () => {
           all.hidden = true;
-          pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), k * 450));
+          pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), k * 520));
         };
       } else {
-        pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), 300 + k * 380));
-        setTimeout(() => {
-          if (!m.winner) return;
-          const diff = total - m.price;
-          $('#summary', el).innerHTML =
-            diff < 0
-              ? `${esc(m.winnerName)} overpaid by <b>${fmt(-diff)}</b>. You dodged that one.`
-              : `${esc(m.winnerName)} made <b>+${fmt(diff)}</b> on it. That one got away.`;
-        }, 300 + pouchIdx.length * 380 + 600);
+        pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), 300 + k * 420));
+        if (!pouchIdx.length) setTimeout(verdict, 400);
       }
     }, afterVis);
   });

@@ -4,7 +4,7 @@ import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { makeRng, type ManifestSlot } from '../../../shared/rules.ts';
 import { drawIcon, XRAY } from '../icons.ts';
 import { AVATARS } from '../avatars.ts';
-import { sound, scanHum, buzz, announce, hush, crowdBed, crowdSwell, tension } from '../audio.ts';
+import { sound, scanHum, buzz, announce, hush, crowdBed, crowdSwell, tension, chant } from '../audio.ts';
 import { showSold } from './unzip.ts';
 
 interface Slot {
@@ -71,6 +71,10 @@ export function auction(root: HTMLElement, lotId: number) {
   let lastBeat = 0;
   let flash = 0;
   let freezeUntil = 0;
+  let lastGeiger = 0;
+  let lockSlot: Slot | null = null;
+  let lockSince = 0;
+  const active = new Set<string>(); // bidders still in
   let beamX = 0;
   let beamDir = 1;
   let dragging = false;
@@ -218,6 +222,29 @@ export function auction(root: HTMLElement, lotId: number) {
       const b = Math.ceil(((beamX + bw / 2) / W) * covered.length);
       for (let i = Math.max(0, a); i < Math.min(covered.length, b); i++) covered[i] = true;
       for (const s of slots) if (Math.abs(s.x - beamX) < bw / 2) s.revealed = true;
+      // Geiger clicks: faster over valuable visible items (their value is public), weight for pouches.
+      const under = slots.find((s) => Math.abs(s.x - beamX) < s.size * 0.35);
+      if (under) {
+        const worth = under.m.pouch ? (under.m.weight === 'heavy' ? 0.55 : under.m.weight === 'medium' ? 0.35 : 0.2) : Math.min(1, Math.log10(baseOf(under.m.id!)) / 4);
+        const rate = 4 + 16 * worth;
+        if (t - lastGeiger > 1000 / rate) {
+          lastGeiger = t;
+          tension.geiger(rate);
+        }
+        // hold the beam on an item for 400 ms to lock on and appraise it
+        if (dragging && under === lockSlot) {
+          if (!under.tagged && t - lockSince > 400) tagSlot(under, true);
+        } else {
+          lockSlot = under;
+          lockSince = t;
+        }
+      }
+      // last two seconds: the scan clock ticks faster
+      const left = scanMs - elapsed;
+      if (left < 2000 && t - lastTick > (left < 1000 ? 250 : 500)) {
+        lastTick = t;
+        tension.tick(left < 1000);
+      }
     }
 
     // revealed parts of the X-ray
@@ -308,6 +335,19 @@ export function auction(root: HTMLElement, lotId: number) {
     g.fillStyle = '#1a1400';
     g.font = `700 ${Math.round(H * 0.045)}px "Barlow Condensed", sans-serif`;
     g.fillText(startMsg?.flight?.code ?? '', x + w * 0.68, y + H * 0.06);
+    const st = startMsg?.flight?.sticker;
+    if (st) {
+      g.save();
+      g.translate(x + w * 0.2, y + h * 0.45);
+      g.rotate(-0.12);
+      g.fillStyle = st === 'FRAGILE' ? '#d62828' : st === 'HEAVY' ? '#f77f00' : '#ffd23f';
+      g.fillRect(-w * 0.14, -H * 0.04, w * 0.28, H * 0.08);
+      g.fillStyle = '#fff';
+      g.font = `800 ${Math.round(H * 0.04)}px "Barlow Condensed", sans-serif`;
+      g.textAlign = 'center';
+      g.fillText(st, 0, H * 0.014);
+      g.restore();
+    }
     g.restore();
   }
 
@@ -322,12 +362,20 @@ export function auction(root: HTMLElement, lotId: number) {
       lastTick = t;
       tension.tick(idle > 3500);
     }
-    if (idle > 3500 && t - lastBeat > 640) {
-      lastBeat = t;
-      tension.heartbeat();
-      buzz(12);
+    // heartbeat from "going once": 90 BPM rising to 140 BPM by "going twice"
+    if (idle > 2000) {
+      const bpm = 90 + 50 * Math.min(1, (idle - 2000) / 1500);
+      if (t - lastBeat > 60000 / bpm) {
+        lastBeat = t;
+        tension.heartbeat();
+        buzz(12);
+        const ring = document.querySelector('.bidwrap');
+        ring?.classList.remove('beat');
+        void (ring as HTMLElement | null)?.offsetWidth;
+        ring?.classList.add('beat');
+      }
     }
-    ($('#vignette', root) as HTMLElement).style.opacity = String(Math.max(0, Math.min(1, (idle - 1500) / 3500)));
+    ($('#vignette', root) as HTMLElement).style.opacity = String(Math.max(0, Math.min(0.75, (idle - 1800) / 3000)));
   }
 
   function updateRing(t: number) {
@@ -372,7 +420,12 @@ export function auction(root: HTMLElement, lotId: number) {
       }
     }
     if (!best || !best.revealed) return;
-    sound.tap();
+    tagSlot(best, false);
+  }
+
+  function tagSlot(best: Slot, locked: boolean) {
+    locked ? tension.lock() : sound.tap();
+    if (locked) buzz(8);
     best.tagged = true;
     label?.remove();
     label = document.createElement('div');
@@ -421,7 +474,7 @@ export function auction(root: HTMLElement, lotId: number) {
           <div class="think"><i></i><i></i><i></i></div>
           ${AVATARS[r.sub] ?? ''}
           <div class="nm" style="color:${r.color}">${esc(r.name)}</div>
-          <div class="wl">${fmt(r.miles)} MI</div>
+          <div class="wl">${fmt(r.miles)} MI${r.grudge ? ' · <span class="grudge">GRUDGE</span>' : ''}</div>
         </div>`,
       )
       .join('');
@@ -505,7 +558,10 @@ export function auction(root: HTMLElement, lotId: number) {
         manifest = m.manifest;
         scanMs = m.scanMs;
         $('#flight', root).textContent = `${m.flight.code}`;
-        $('#origin', root).textContent = `from ${m.flight.origin} · ${state.cfg!.terminals[m.tier].name}`;
+        $('#origin', root).innerHTML = `${esc(m.flight.origin)} · ${m.flight.kg ?? '?'} kg · ${m.flight.days} days${m.flight.sticker ? ` · <span class="sticker">${esc(m.flight.sticker)}</span>` : ''}`;
+        active.clear();
+        active.add(me);
+        for (const r of m.rivals) active.add(r.account);
         const chip = $('#tagchip', root);
         chip.hidden = false;
         chip.innerHTML = `🔒 tag ${short(m.commitment, 6)}`;
@@ -549,6 +605,7 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#jumpv', root).textContent = '+3 steps';
         controls(true);
         announce(`Who'll start me at ${price}?`, { urgent: true });
+        chant(true);
         break;
       case 'auction:bid': {
         price = m.price;
@@ -575,7 +632,16 @@ export function auction(root: HTMLElement, lotId: number) {
           banner(`BIDDING WAR ×${m.war}`, 'war');
           tension.rumble(Math.min(3, m.war - 3));
         }
-        if (!m.snipe && Math.random() < 0.35) announce(`${fmt(price)}! Do I hear ${fmt(next)}?`);
+        if (m.jump) tension.ooh();
+        chant(false);
+        chant(true, Math.min(4, m.war ?? 0));
+        break;
+      }
+      case 'auction:twitch': {
+        const pad = rivalCards.get(m.by)?.querySelector('.paddle') as HTMLElement | null;
+        pad?.classList.remove('twitch');
+        void pad?.offsetWidth;
+        pad?.classList.add('twitch');
         break;
       }
       case 'auction:think': {
@@ -587,6 +653,7 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'auction:call':
         showCallout(m.stage);
         m.stage === 'once' ? sound.once() : sound.twice();
+        chant(false);
         announce(m.stage === 'once' ? 'Going once' : 'Going twice', { urgent: true, rate: 1.05 });
         buzz(m.stage === 'once' ? 30 : [30, 60, 30]);
         break;
@@ -595,6 +662,14 @@ export function auction(root: HTMLElement, lotId: number) {
         card?.classList.add('folded');
         card?.classList.remove('thinking');
         say(m.by, m.line);
+        active.delete(m.by);
+        if (active.size === 2 && phase === 'live') {
+          const [a, b] = [...active];
+          const name = (acc: string) => (acc === me ? 'YOU' : (rivalCards.get(acc)?.querySelector('.nm')?.textContent ?? '').toUpperCase());
+          $('#auctionRoot', root).classList.add('duel');
+          banner(`HEAD TO HEAD: ${name(a)} vs ${name(b)}`, 'war');
+          crowdSwell(1);
+        }
         if (m.by !== me) sound.fold();
         if (m.by === me) {
           controls(false);
@@ -611,8 +686,13 @@ export function auction(root: HTMLElement, lotId: number) {
         controls(false);
         scanHum(false);
         crowdBed(false);
-        // hitstop, gavel slam, shake: the hammer has to feel heavy
-        freezeUntil = performance.now() + 90;
+        chant(false);
+        $('#auctionRoot', root).classList.remove('duel');
+        // hitstop, gavel slam, camera punch, shake: the hammer has to feel heavy
+        freezeUntil = performance.now() + 150;
+        belt.classList.remove('punch');
+        void belt.offsetWidth;
+        belt.classList.add('punch');
         slam();
         sound.sold(m.winner === me);
         announce(m.winner === me ? 'Sold! To you!' : m.winner ? `Sold, to ${m.winnerName}!` : 'No sale.', { urgent: true, rate: 1.0 });
@@ -663,6 +743,7 @@ export function auction(root: HTMLElement, lotId: number) {
     cancelAnimationFrame(raf);
     scanHum(false);
     crowdBed(false);
+    chant(false);
     hush();
     window.removeEventListener('resize', onResize);
     document.querySelector('.overlay')?.remove();
