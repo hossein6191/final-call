@@ -4,7 +4,7 @@ Bid on unclaimed airport luggage against AI rivals who carry real wallets. Scan 
 
 Built for **NEAR HACKATHON 2026**, track **Games With Real Economies** (also entered in **AI Swarms**).
 
-- Play: `<hosted URL>`
+- Play: https://final-call-production-5913.up.railway.app (best on a phone)
 - Demo video: `<X post URL>`
 - Contract: [`finalcall.testnet`](https://testnet.nearblocks.io/address/finalcall.testnet) (NEAR testnet)
 
@@ -21,7 +21,7 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
 
 ## Try it (do X → see Y)
 
-1. Open the play link on a phone (or a narrow browser window) and type a nickname, then tap **CHECK IN**.
+1. Open https://final-call-production-5913.up.railway.app on a phone (or a narrow browser window) and type a nickname, then tap **CHECK IN**.
    → In about 5 seconds you see your new account (`<name>-xxxx.finalcall.testnet`) with a transaction link, and the Arrivals board opens. No wallet prompt appears.
 2. Tap **BID** on the row marked **★ Your welcome bag**.
    → The bag rolls onto the belt, the X-ray switches on, and a scanner beam sweeps it. Drag across the bag and tap silhouettes to appraise them.
