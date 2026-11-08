@@ -29,7 +29,7 @@ export const RIVALS: RivalDef[] = [
   {
     sub: 'bigsal', name: 'Big Sal', title: 'The whale', color: '#d94f4f',
     bio: 'Owns three pawn shops and hates losing to newcomers.',
-    startMiles: 25000, noise: 0.18, greed: [0.95, 1.12], walletShare: 0.35, style: 'whale',
+    startMiles: 25000, noise: 0.18, greed: [0.82, 0.98], walletShare: 0.3, style: 'whale',
     voice: 'loud, boastful, rich pawn-shop owner who teases newcomers',
   },
   {

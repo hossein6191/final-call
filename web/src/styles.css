@@ -325,3 +325,10 @@ a { color: var(--sign); }
 .wallet .miles.bump { animation: bump .3s; }
 .rivals { margin-top: 18px; }
 .price { margin-top: 2px; }
+
+.ffchart { width: 100%; height: auto; background: #0c111b; border-radius: 10px; border: 1px solid #1d2a43; }
+.ffline { stroke-dasharray: 1; stroke-dashoffset: 1; animation: ffdraw 3s ease-out forwards; }
+.ffline[stroke-dasharray="3 3"] { stroke-dasharray: none; opacity: .55; animation: fadein 3s ease-out; }
+@keyframes ffdraw { to { stroke-dashoffset: 0; } }
+.fflegend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; margin: 8px 0; color: var(--muted); }
+.fflegend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }

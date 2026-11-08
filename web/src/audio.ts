@@ -135,6 +135,9 @@ export const sound = {
     tone(2093, 0.25, { type: 'square', gain: 0.08, at: 0.07 });
     noise(0.15, { at: 0.05, freq: 5000, type: 'highpass', gain: 0.12 });
   },
+  whoosh() {
+    noise(0.5, { freq: 1200, q: 0.6, gain: 0.2 });
+  },
   error() {
     tone(200, 0.2, { type: 'square', gain: 0.08 });
     tone(150, 0.25, { type: 'square', gain: 0.08, at: 0.12 });

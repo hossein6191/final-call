@@ -201,8 +201,8 @@ export function openingBid(tier: number): number {
 export const DEMAND = {
   startBp: 10000,
   floorBp: 4000,
-  perSaleFactor: 0.92,
-  recoverBpPerHour: 200,
+  perSaleFactor: 0.96,
+  recoverBpPerHour: 600,
 };
 
 export function demandNow(storedBp: number, updatedMs: number, nowMs: number): number {

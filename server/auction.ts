@@ -259,8 +259,8 @@ export class Auction {
     for (const s of this.rivals) {
       if (s.folded || s === this.leader) continue;
       const next = this.nextPrice();
-      // Whale ego: Big Sal pushes 20% harder when a human holds the lead.
-      const ego = s.rival!.def.style === 'whale' && this.leader === this.player ? 1.2 : 1;
+      // Whale ego: Big Sal pushes 10% harder when a human holds the lead.
+      const ego = s.rival!.def.style === 'whale' && this.leader === this.player ? 1.1 : 1;
       const ceiling = Math.min(s.max * ego, freeMiles(s.rival!) + s.max);
       if (next > ceiling) {
         // Folding takes a beat so it reads as a decision.

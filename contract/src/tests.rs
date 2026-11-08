@@ -150,12 +150,12 @@ fn dealer_price_falls_and_recovers() {
     let got = c.sell("film-camera@mint".into(), 1);
     assert_eq!(got, 165);
     assert_eq!(c.get_profile(acc(ALICE)).unwrap().profile.miles, 900 + 165);
-    // Demand is now 0.92: 110 * 1.5 * 0.92 = 151.
-    assert_eq!(c.dealer_quote("film-camera@mint".into(), 1), 151);
-    // Recovers 2% per hour back toward 1.0.
-    ctx(ALICE, 4_000 + 2 * HOUR_NS);
+    // Demand is now 0.96: 110 * 1.5 * 0.96 = 158.
     assert_eq!(c.dealer_quote("film-camera@mint".into(), 1), 158);
-    ctx(ALICE, 4_000 + 10 * HOUR_NS);
+    // Recovers 6% per hour back toward 1.0: half an hour later it is 0.99.
+    ctx(ALICE, 4_000 + HOUR_NS / 2);
+    assert_eq!(c.dealer_quote("film-camera@mint".into(), 1), 163);
+    ctx(ALICE, 4_000 + 2 * HOUR_NS);
     assert_eq!(c.dealer_quote("film-camera@mint".into(), 1), 165);
 }
 
