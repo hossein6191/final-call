@@ -139,6 +139,127 @@ export const sound = {
   },
 };
 
+// ---------- the auctioneer ----------
+// A real voice (the browser's speech engine) calls the auction. It is short on purpose so it
+// never lags behind the clock.
+let voice: SpeechSynthesisVoice | null = null;
+function pickVoice() {
+  try {
+    const all = speechSynthesis.getVoices();
+    const pref = ['Daniel', 'Google UK English Male', 'Alex', 'Fred', 'Google US English'];
+    voice = pref.map((n) => all.find((v) => v.name.includes(n))).find(Boolean) ?? all.find((v) => v.lang.startsWith('en')) ?? null;
+  } catch {
+    voice = null;
+  }
+}
+try {
+  speechSynthesis.onvoiceschanged = pickVoice;
+  pickVoice();
+} catch {}
+
+export function announce(text: string, opts: { rate?: number; pitch?: number; urgent?: boolean } = {}) {
+  if (muted) return;
+  try {
+    if (opts.urgent) speechSynthesis.cancel();
+    else if (speechSynthesis.speaking) return;
+    const u = new SpeechSynthesisUtterance(text);
+    if (voice) u.voice = voice;
+    u.rate = opts.rate ?? 1.18;
+    u.pitch = opts.pitch ?? 0.85;
+    u.volume = 0.9;
+    speechSynthesis.speak(u);
+  } catch {}
+}
+
+export function hush() {
+  try {
+    speechSynthesis.cancel();
+  } catch {}
+}
+
+// ---------- crowd and tension ----------
+let crowd: { gain: GainNode; stop: () => void } | null = null;
+export function crowdBed(on: boolean) {
+  if (!ctx) return;
+  if (!on) {
+    crowd?.stop();
+    crowd = null;
+    return;
+  }
+  if (crowd) return;
+  const len = ctx.sampleRate * 2;
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < len; i++) {
+    last = last * 0.97 + (Math.random() * 2 - 1) * 0.03; // brown-ish murmur
+    d[i] = last * 6;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.loop = true;
+  const f = ctx.createBiquadFilter();
+  f.type = 'bandpass';
+  f.frequency.value = 420;
+  f.Q.value = 0.6;
+  const g = ctx.createGain();
+  g.gain.value = 0.0001;
+  g.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.8);
+  src.connect(f).connect(g).connect(sfx);
+  src.start();
+  crowd = {
+    gain: g,
+    stop: () => {
+      g.gain.setTargetAtTime(0.0001, ctx!.currentTime, 0.3);
+      src.stop(ctx!.currentTime + 1.5);
+    },
+  };
+}
+
+/** The room reacts to a bid: a short swell of murmur. */
+export function crowdSwell(amount = 1) {
+  if (!ctx || !crowd) return;
+  const t = ctx.currentTime;
+  crowd.gain.gain.cancelScheduledValues(t);
+  crowd.gain.gain.setValueAtTime(crowd.gain.gain.value, t);
+  crowd.gain.gain.linearRampToValueAtTime(0.05 + 0.07 * amount, t + 0.12);
+  crowd.gain.gain.linearRampToValueAtTime(0.05, t + 1.2);
+}
+
+export const tension = {
+  tick(fast: boolean) {
+    tone(fast ? 1800 : 1400, 0.03, { type: 'square', gain: fast ? 0.07 : 0.05 });
+  },
+  heartbeat() {
+    tone(62, 0.12, { type: 'sine', gain: 0.5, slide: 45 });
+    tone(58, 0.12, { type: 'sine', gain: 0.38, slide: 42, at: 0.18 });
+  },
+  whoosh() {
+    noise(0.35, { freq: 900, q: 0.7, gain: 0.25 });
+  },
+  clunk() {
+    tone(90, 0.18, { type: 'sine', gain: 0.45, slide: 60 });
+    noise(0.05, { freq: 300, q: 1, gain: 0.3 });
+  },
+  xrayOn() {
+    tone(2400, 0.12, { type: 'sine', gain: 0.08, slide: 3200 });
+    noise(0.12, { freq: 7000, type: 'highpass', gain: 0.06 });
+  },
+  rumble(level: number) {
+    // a sub-bass swell for big moments (jackpots, bidding wars)
+    tone(40 + level * 6, 0.6, { type: 'sine', gain: 0.25 + level * 0.1 });
+  },
+  sniped() {
+    tone(700, 0.15, { type: 'sawtooth', gain: 0.08, slide: 300 });
+    tone(500, 0.3, { type: 'sawtooth', gain: 0.07, slide: 180, at: 0.12 });
+  },
+  rise(rarity: number) {
+    // anticipation before a pouch opens; longer and higher for rarer things
+    const dur = [0.25, 0.3, 0.45, 0.7, 1.1][rarity] ?? 0.3;
+    tone(300, dur, { type: 'sine', gain: 0.1, slide: 300 * (1.5 + rarity * 0.6) });
+  },
+};
+
 // ---------- scanner hum ----------
 let hum: { stop: () => void } | null = null;
 export function scanHum(on: boolean) {

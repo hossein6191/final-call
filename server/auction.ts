@@ -8,7 +8,9 @@ import { house, panicMessage, txUrl } from './chain.ts';
 import { voiceRivals, scriptedLines, type Lines, type Voiced } from './ai.ts';
 import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
 
-export const SCAN_MS = 6000;
+// 1.2 s for the bag to roll into the X-ray tunnel, then 6 s of scanning.
+export const ARRIVE_MS = 1200;
+export const SCAN_MS = ARRIVE_MS + 6000;
 const TICK_MS = 100;
 
 export type Send = (msg: object) => void;
@@ -51,6 +53,8 @@ export class Auction {
   lastBidAt = 0;
   startedAt = 0;
   calls = 0;
+  war = 0; // consecutive back-and-forth bids between the same two bidders
+  private prev: Seat | null = null;
   phase: 'scan' | 'live' | 'done' = 'scan';
   voiced: Voiced;
   private timer: NodeJS.Timeout | null = null;
@@ -112,6 +116,7 @@ export class Auction {
       manifest: this.manifest,
       opening: this.bag.opening,
       scanMs: SCAN_MS,
+      arriveMs: ARRIVE_MS,
       appraisal: publicEstimate(this.manifest, this.bag.tier),
       rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, sub: s.rival!.def.sub, color: s.rival!.def.color, title: s.rival!.def.title, miles: s.rival!.miles })),
       you: { miles: this.playerMiles },
@@ -148,6 +153,9 @@ export class Auction {
 
   private accept(s: Seat, amount: number, jump: boolean) {
     const prevLeader = this.leader;
+    const snipe = this.calls >= 2; // landed after "going twice"
+    this.war = prevLeader && this.prev === s && prevLeader !== s ? this.war + 1 : prevLeader ? 1 : 0;
+    this.prev = prevLeader;
     this.price = amount;
     this.leader = s;
     this.lastBidAt = Date.now();
@@ -156,7 +164,7 @@ export class Auction {
     for (const x of this.seats) x.planAt = null;
     const l = this.linesFor(s);
     const line = l ? (s.bids === 1 ? l.open : Math.random() < 0.4 ? l.raise : undefined) : undefined;
-    this.send({ type: 'auction:bid', by: s.id, name: s.name, price: amount, jump, line, next: this.nextPrice(), heat: this.heat() });
+    this.send({ type: 'auction:bid', by: s.id, name: s.name, price: amount, jump, line, next: this.nextPrice(), heat: this.heat(), snipe, war: this.war, outbid: prevLeader?.id ?? null });
     // A bluffer caught by a jump often folds.
     if (jump && prevLeader?.rival?.def.style === 'bluffer' && Math.random() < 0.6) this.fold(prevLeader);
   }
@@ -247,6 +255,8 @@ export class Auction {
         const p = this.planDelay(s, idle);
         s.planAt = p.at;
         s.planJump = p.jump;
+        // A long pause is a real tell: this rival is close to their limit.
+        if (p.at - now > 900 && s.rival!.def.style !== 'expert') this.send({ type: 'auction:think', by: s.id });
       } else if (now >= s.planAt) {
         let amount = next;
         if (s.planJump) {

@@ -4,7 +4,7 @@ import { state, $, fmt, esc, go, txLink, rarityOf, valueOf, RARITY_NAMES, refres
 import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { commitmentPreimage, type BagItem } from '../../../shared/rules.ts';
 import { iconSvg } from '../icons.ts';
-import { sound, buzz } from '../audio.ts';
+import { sound, buzz, tension } from '../audio.ts';
 
 async function sha256hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -57,6 +57,7 @@ export function showSold(m: any) {
   el.innerHTML = `
     <div class="sheet">
       <div class="stamp ${won ? 'win' : ''}">${won ? 'YOURS!' : m.winner ? 'SOLD' : 'NO SALE'}</div>
+      <div class="case3d tier${m.tier}" id="case3d"><div class="lid"><i></i></div><div class="base"><b>${esc(m.flight?.code ?? '')}</b></div></div>
       <div class="result-line">${
         won
           ? `You won ${esc(m.flight?.code ?? '')} for <b>${fmt(m.price)} MI</b>`
@@ -125,34 +126,64 @@ export function showSold(m: any) {
     }
   };
 
+  const ticker = (el: HTMLElement, to: number, ms: number) => {
+    const t0 = performance.now();
+    const step = (t: number) => {
+      const k = Math.min(1, (t - t0) / ms);
+      el.textContent = fmt(to * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+
   const revealTile = (i: number) => {
     const it = items[i];
     const t = tiles[i];
     const rar = rarityOf(it.id, m.tier);
     const value = valueOf(it.id, it.cond, demand.get(it.id) ?? 10000);
-    t.className = `item in r-${RARITY_NAMES[rar]}`;
-    t.innerHTML = `${iconSvg(it.id)}<div class="nm">${esc(ITEM_BY_ID[it.id].name)}</div><div class="val">${fmt(value)}</div><div class="cond">${it.cond} · ${RARITY_NAMES[rar]}</div>`;
+    t.className = `item in pop r-${RARITY_NAMES[rar]}`;
+    t.innerHTML = `${iconSvg(it.id)}<div class="nm">${esc(ITEM_BY_ID[it.id].name)}</div><div class="val">0</div><div class="cond">${it.cond} · ${RARITY_NAMES[rar]}</div>`;
+    ticker(t.querySelector('.val') as HTMLElement, value, 260 + rar * 140);
     total += value;
     sound.pop(rar);
     if (rar >= 3) buzz(rar >= 4 ? [80, 40, 160] : 50);
-    if (rar >= 4) confetti(true);
+    if (rar >= 3) tension.rumble(rar - 2);
+    if (rar >= 4) {
+      confetti(true);
+      rays();
+    }
     update();
   };
 
+  // A pouch hesitates longer and glows its colour before it opens: rarer = longer.
   const openPouch = (i: number) => {
     const t = tiles[i];
     if (!t.classList.contains('pouch')) return;
+    const rar = rarityOf(items[i].id, m.tier);
+    const wait = [320, 420, 650, 900, 1300][rar];
     t.classList.remove('pouch');
-    t.classList.add('wobble');
+    t.classList.add('wobble', `tell-${RARITY_NAMES[rar]}`);
+    t.style.setProperty('--wobble', `${wait}ms`);
+    tension.rise(rar);
     sound.crack();
-    setTimeout(() => revealTile(i), 420);
+    setTimeout(() => revealTile(i), wait);
+  };
+
+  const rays = () => {
+    const r = document.createElement('div');
+    r.className = 'rays';
+    document.body.appendChild(r);
+    setTimeout(() => r.remove(), 1800);
   };
 
   const pouchIdx = items.map((it, i) => (it.pouch ? i : -1)).filter((i) => i >= 0);
   const visIdx = items.map((it, i) => (!it.pouch ? i : -1)).filter((i) => i >= 0);
   loadDemand().then((d) => {
     demand = d;
-    setTimeout(() => sound.zip(), 250);
+    setTimeout(() => {
+      sound.zip();
+      $('#case3d', el)?.classList.add('open');
+    }, 250);
     visIdx.forEach((i, k) => setTimeout(() => revealTile(i), 600 + k * 230));
     const afterVis = 600 + visIdx.length * 230 + 200;
     setTimeout(() => {

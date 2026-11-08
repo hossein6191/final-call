@@ -4,7 +4,7 @@ import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { makeRng, type ManifestSlot } from '../../../shared/rules.ts';
 import { drawIcon, XRAY } from '../icons.ts';
 import { AVATARS } from '../avatars.ts';
-import { sound, scanHum, buzz } from '../audio.ts';
+import { sound, scanHum, buzz, announce, hush, crowdBed, crowdSwell, tension } from '../audio.ts';
 import { showSold } from './unzip.ts';
 
 interface Slot {
@@ -18,10 +18,18 @@ interface Slot {
 }
 
 const SOLD_MS = 5000;
+const GAVEL = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="14" width="30" height="16" rx="4" transform="rotate(-30 23 22)" fill="#8b5a2b" stroke="#3b2410" stroke-width="2"/><rect x="26" y="26" width="6" height="34" rx="3" transform="rotate(-30 29 43)" fill="#a0522d" stroke="#3b2410" stroke-width="2"/><rect x="34" y="52" width="24" height="6" rx="2" fill="#5c3a1e"/></svg>`;
+const easeOutBack = (t: number) => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+function paddleNo(acc: string) {
+  let h = 7;
+  for (const ch of acc) h = (h * 31 + ch.charCodeAt(0)) % 97;
+  return String(h + 2).padStart(2, '0');
+}
 
 export function auction(root: HTMLElement, lotId: number) {
   root.innerHTML = `
-  <div class="auction">
+  <div class="auction" id="auctionRoot">
+    <div class="vignette" id="vignette"></div>
     <div class="lot-head"><b id="flight">Boarding…</b><span id="origin"></span><span class="grow"></span><span id="aichip"></span></div>
     <div class="belt" id="belt">
       <canvas id="xray"></canvas>
@@ -32,8 +40,11 @@ export function auction(root: HTMLElement, lotId: number) {
     <div class="appraise" id="appraise"></div>
     <div class="price">
       <div class="callout" id="callout"></div>
+      <div class="gavel" id="gavel">${GAVEL}</div>
+      <div class="paddle mine" id="mypaddle"><b>YOU</b><span></span></div>
       <div class="amt" id="amt">—</div>
       <div class="who" id="who">Opening bid</div>
+      <div class="banner" id="banner"></div>
     </div>
     <div class="rivals" id="rivals"></div>
     <div class="controls">
@@ -51,9 +62,15 @@ export function auction(root: HTMLElement, lotId: number) {
   const me = state.id!.account;
   let manifest: ManifestSlot[] = [];
   let slots: Slot[] = [];
-  let phase: 'wait' | 'scan' | 'live' | 'sold' = 'wait';
+  let phase: 'wait' | 'arrive' | 'scan' | 'live' | 'sold' = 'wait';
   let scanStart = 0;
   let scanMs = 6000;
+  let arriveStart = 0;
+  let arriveMs = 1200;
+  let lastTick = 0;
+  let lastBeat = 0;
+  let flash = 0;
+  let freezeUntil = 0;
   let beamX = 0;
   let beamDir = 1;
   let dragging = false;
@@ -148,7 +165,7 @@ export function auction(root: HTMLElement, lotId: number) {
 
   function draw(t: number) {
     raf = requestAnimationFrame(draw);
-    if (!W) return;
+    if (!W || t < freezeUntil) return;
     g.clearRect(0, 0, W, H);
     // belt
     g.fillStyle = '#04060b';
@@ -161,6 +178,25 @@ export function auction(root: HTMLElement, lotId: number) {
       g.moveTo(x + shift, H * 0.94);
       g.lineTo(x + shift + 20, H);
       g.stroke();
+    }
+    // lead curtains at the tunnel mouth
+    for (const edge of [0, W - W * 0.045]) {
+      for (let k = 0; k < 4; k++) {
+        const sway = Math.sin(t / 300 + k + edge) * (phase === 'arrive' ? 3 : 0.6);
+        g.fillStyle = `rgba(40,60,90,${0.55 - k * 0.08})`;
+        g.fillRect(edge + k * (W * 0.011) + sway, 0, W * 0.009, H * 0.92);
+      }
+    }
+    if (phase === 'arrive') {
+      const k = Math.min(1, (t - arriveStart) / (arriveMs * 0.85));
+      const dx = (1 - easeOutBack(k)) * -W;
+      drawSuitcase(dx);
+      return void updateRing(t);
+    }
+    if (flash > 0) {
+      g.fillStyle = `rgba(200,235,255,${flash})`;
+      g.fillRect(0, 0, W, H);
+      flash = Math.max(0, flash - 0.06);
     }
     // faint outline so you know where the bag is
     g.strokeStyle = 'rgba(74,168,255,.14)';
@@ -243,7 +279,59 @@ export function auction(root: HTMLElement, lotId: number) {
     updateRing(t);
   }
 
+  function drawSuitcase(dx: number) {
+    const colors = ['#2f8f83', '#2b4c7e', '#7a1f3d'];
+    const c = colors[tier] ?? colors[0];
+    const { x, y, w, h } = caseBox;
+    g.save();
+    g.translate(dx, 0);
+    g.fillStyle = 'rgba(0,0,0,.45)';
+    g.beginPath();
+    g.ellipse(x + w / 2, y + h + H * 0.03, w * 0.48, H * 0.025, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = c;
+    g.beginPath();
+    g.roundRect(x, y, w, h, W * 0.03);
+    g.fill();
+    g.fillStyle = 'rgba(255,255,255,.08)';
+    for (let i = 1; i < 5; i++) g.fillRect(x + (w / 5) * i - 2, y + 6, 4, h - 12);
+    g.strokeStyle = 'rgba(0,0,0,.35)';
+    g.lineWidth = W * 0.012;
+    g.beginPath();
+    g.roundRect(x + w * 0.38, y - H * 0.09, w * 0.24, H * 0.1, W * 0.02);
+    g.stroke();
+    // the paper luggage tag
+    g.fillStyle = '#f4e9c8';
+    g.beginPath();
+    g.roundRect(x + w * 0.66, y - H * 0.02, w * 0.22, H * 0.11, 4);
+    g.fill();
+    g.fillStyle = '#1a1400';
+    g.font = `700 ${Math.round(H * 0.045)}px "Barlow Condensed", sans-serif`;
+    g.fillText(startMsg?.flight?.code ?? '', x + w * 0.68, y + H * 0.06);
+    g.restore();
+  }
+
+  function tensionTick(t: number) {
+    if (phase !== 'live' || !leader) {
+      ($('#vignette', root) as HTMLElement).style.opacity = '0';
+      return;
+    }
+    const idle = t - lastBid;
+    const gap = idle > 3500 ? 220 : idle > 2000 ? 420 : 0;
+    if (gap && t - lastTick > gap) {
+      lastTick = t;
+      tension.tick(idle > 3500);
+    }
+    if (idle > 3500 && t - lastBeat > 640) {
+      lastBeat = t;
+      tension.heartbeat();
+      buzz(12);
+    }
+    ($('#vignette', root) as HTMLElement).style.opacity = String(Math.max(0, Math.min(1, (idle - 1500) / 3500)));
+  }
+
   function updateRing(t: number) {
+    tensionTick(t);
     const ring = $('#ring', root) as unknown as SVGCircleElement | null;
     if (!ring) return;
     if (phase !== 'live') {
@@ -329,6 +417,7 @@ export function auction(root: HTMLElement, lotId: number) {
       .map(
         (r) => `<div class="rival" data-acc="${r.account}">
           <div class="bubble"></div>
+          <div class="paddle"><b>${paddleNo(r.account)}</b><span></span></div>
           <div class="think"><i></i><i></i><i></i></div>
           ${AVATARS[r.sub] ?? ''}
           <div class="nm" style="color:${r.color}">${esc(r.name)}</div>
@@ -369,6 +458,43 @@ export function auction(root: HTMLElement, lotId: number) {
     c.classList.add('show');
   }
 
+  function raisePaddle(acc: string, amount: number) {
+    const card = rivalCards.get(acc);
+    const pad = acc === me ? $('#mypaddle', root) : (card?.querySelector('.paddle') as HTMLElement | null);
+    if (!pad) return;
+    (pad.querySelector('span') as HTMLElement).textContent = fmt(amount);
+    pad.classList.remove('up');
+    void pad.offsetWidth;
+    pad.classList.add('up');
+  }
+
+  function shakeCard(acc: string) {
+    const card = rivalCards.get(acc);
+    if (!card) return;
+    card.classList.remove('shake');
+    void card.offsetWidth;
+    card.classList.add('shake');
+  }
+
+  function banner(text: string, kind: string) {
+    const b = $('#banner', root);
+    b.textContent = text;
+    b.className = `banner ${kind}`;
+    void b.offsetWidth;
+    b.classList.add('show');
+  }
+
+  function slam() {
+    const gv = $('#gavel', root);
+    gv.classList.remove('slam');
+    void gv.offsetWidth;
+    gv.classList.add('slam');
+    const a = $('#auctionRoot', root);
+    a.classList.remove('shake');
+    void a.offsetWidth;
+    a.classList.add('shake');
+  }
+
   // ---------- messages ----------
   const offMsg = live.on((m) => {
     if (m.lotId !== undefined && m.lotId !== lotId && m.type.startsWith('auction')) return;
@@ -387,14 +513,27 @@ export function auction(root: HTMLElement, lotId: number) {
         drawRivals(m.rivals);
         layout();
         appraise();
-        phase = 'scan';
-        scanStart = performance.now();
-        beamX = W * 0.05;
-        $('#hint', root).textContent = 'DRAG TO SCAN · TAP ITEMS TO APPRAISE';
+        arriveMs = m.arriveMs ?? 1200;
+        phase = 'arrive';
+        arriveStart = performance.now();
+        tension.whoosh();
+        $('#hint', root).textContent = `NOW ARRIVING · BELT ${m.flight.carousel}`;
+        setTimeout(() => {
+          if (phase !== 'arrive') return;
+          tension.clunk();
+          tension.xrayOn();
+          flash = 0.9;
+          phase = 'scan';
+          scanStart = performance.now();
+          scanMs = m.scanMs - arriveMs;
+          beamX = W * 0.05;
+          $('#hint', root).textContent = 'DRAG TO SCAN · TAP ITEMS TO APPRAISE';
+          scanHum(true);
+        }, arriveMs);
+        crowdBed(true);
         $('#amt', root).textContent = fmt(m.opening);
         $('#who', root).innerHTML = `Opening bid · you have <b>${fmt(m.you.miles)}</b> MI`;
         $('#bidv', root).textContent = fmt(m.opening);
-        scanHum(true);
         break;
       }
       case 'auction:live':
@@ -409,6 +548,7 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#bidv', root).textContent = fmt(next);
         $('#jumpv', root).textContent = '+3 steps';
         controls(true);
+        announce(`Who'll start me at ${price}?`, { urgent: true });
         break;
       case 'auction:bid': {
         price = m.price;
@@ -423,18 +563,37 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#who', root).innerHTML = m.by === me ? '<b>You</b> lead' : `<b>${esc(m.name)}</b> leads${m.heat ? ' · <span class="heat">HEAT: DOUBLE STEPS</span>' : ''}`;
         $('#bidv', root).textContent = fmt(next);
         sound.bid(price, m.by === me);
+        crowdSwell(Math.min(1, (m.war ?? 0) / 4));
         if (m.by !== me) buzz(15);
         say(m.by, m.line);
+        raisePaddle(m.by, price);
+        if (m.outbid && m.by === me) shakeCard(m.outbid);
+        if (m.snipe) {
+          banner(m.by === me ? 'LAST-SECOND BID!' : `${m.name.toUpperCase()} SNIPES IT!`, 'snipe');
+          if (m.by !== me && m.outbid === me) tension.sniped();
+        } else if ((m.war ?? 0) >= 4) {
+          banner(`BIDDING WAR ×${m.war}`, 'war');
+          tension.rumble(Math.min(3, m.war - 3));
+        }
+        if (!m.snipe && Math.random() < 0.35) announce(`${fmt(price)}! Do I hear ${fmt(next)}?`);
+        break;
+      }
+      case 'auction:think': {
+        const card = rivalCards.get(m.by);
+        card?.classList.add('thinking');
+        setTimeout(() => card?.classList.remove('thinking'), 1400);
         break;
       }
       case 'auction:call':
         showCallout(m.stage);
         m.stage === 'once' ? sound.once() : sound.twice();
+        announce(m.stage === 'once' ? 'Going once' : 'Going twice', { urgent: true, rate: 1.05 });
         buzz(m.stage === 'once' ? 30 : [30, 60, 30]);
         break;
       case 'auction:fold': {
         const card = rivalCards.get(m.by);
         card?.classList.add('folded');
+        card?.classList.remove('thinking');
         say(m.by, m.line);
         if (m.by !== me) sound.fold();
         if (m.by === me) {
@@ -451,7 +610,12 @@ export function auction(root: HTMLElement, lotId: number) {
         phase = 'sold';
         controls(false);
         scanHum(false);
+        crowdBed(false);
+        // hitstop, gavel slam, shake: the hammer has to feel heavy
+        freezeUntil = performance.now() + 90;
+        slam();
         sound.sold(m.winner === me);
+        announce(m.winner === me ? 'Sold! To you!' : m.winner ? `Sold, to ${m.winnerName}!` : 'No sale.', { urgent: true, rate: 1.0 });
         buzz([60, 40, 120]);
         // reveal the whole bag on the belt too
         for (let i = 0; i < covered.length; i++) covered[i] = true;
@@ -498,6 +662,8 @@ export function auction(root: HTMLElement, lotId: number) {
     offMsg();
     cancelAnimationFrame(raf);
     scanHum(false);
+    crowdBed(false);
+    hush();
     window.removeEventListener('resize', onResize);
     document.querySelector('.overlay')?.remove();
   };

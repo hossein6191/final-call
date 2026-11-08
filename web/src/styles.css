@@ -248,3 +248,56 @@ a { color: var(--sign); }
 .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
 .spinner { width: 16px; height: 16px; border-radius: 8px; border: 2px solid var(--sign); border-right-color: transparent; animation: spin .8s linear infinite; display: inline-block; }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* ---------- excitement layer ---------- */
+.auction { position: relative; }
+.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 4; opacity: 0; transition: opacity .25s;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(255,40,40,.28) 80%, rgba(255,20,20,.5) 100%); }
+.auction.shake { animation: shake .38s cubic-bezier(.36,.07,.19,.97); }
+@keyframes shake { 10%, 90% { transform: translate(-2px, 1px); } 20%, 80% { transform: translate(5px, -2px); } 30%, 50%, 70% { transform: translate(-8px, 3px); } 40%, 60% { transform: translate(8px, -3px); } }
+.gavel { position: absolute; right: 6%; top: -12px; width: 64px; height: 64px; opacity: 0; pointer-events: none; transform-origin: 85% 90%; }
+.gavel.slam { animation: slam .55s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes slam { 0% { opacity: 0; transform: rotate(-70deg) translateY(-20px); } 35% { opacity: 1; transform: rotate(-70deg); } 55% { transform: rotate(8deg); } 70% { transform: rotate(-4deg); } 100% { opacity: 1; transform: rotate(0); } }
+.paddle { position: absolute; left: 50%; top: -6px; transform: translate(-50%, 10px) scale(.6); opacity: 0; pointer-events: none; z-index: 2;
+  background: #f4f7fd; color: #0d1424; border-radius: 10px 10px 6px 6px; padding: 3px 8px 4px; text-align: center; box-shadow: 0 6px 14px rgba(0,0,0,.4); min-width: 54px; }
+.paddle::after { content: ''; position: absolute; left: 50%; bottom: -12px; width: 6px; height: 12px; background: #8b5a2b; transform: translateX(-50%); border-radius: 0 0 2px 2px; }
+.paddle b { display: block; font-family: var(--display); font-size: 12px; letter-spacing: .1em; color: #c0392b; line-height: 1; }
+.paddle span { font-family: var(--display); font-weight: 800; font-size: 18px; line-height: 1; }
+.paddle.up { animation: paddle 1.3s cubic-bezier(.2,1.5,.4,1) both; }
+@keyframes paddle { 0% { opacity: 0; transform: translate(-50%, 18px) scale(.5) rotate(-8deg); } 18% { opacity: 1; transform: translate(-50%, -26px) scale(1.08) rotate(3deg); } 30% { transform: translate(-50%, -22px) scale(1) rotate(0); } 80% { opacity: 1; transform: translate(-50%, -22px) scale(1); } 100% { opacity: 0; transform: translate(-50%, -14px) scale(.95); } }
+.paddle.mine { left: 14%; top: 8px; background: var(--sign); }
+.paddle.mine b { color: #7a5b00; }
+.rival .face { animation: idle 3.2s ease-in-out infinite; }
+.rival:nth-child(2) .face { animation-delay: -1.1s; } .rival:nth-child(3) .face { animation-delay: -2.2s; }
+@keyframes idle { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-2px) rotate(-2deg); } }
+.rival.shake { animation: nope .45s; }
+@keyframes nope { 20% { transform: translateX(-5px) rotate(-3deg); } 40% { transform: translateX(5px) rotate(3deg); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+.rival.thinking { border-color: #ff9a3c; }
+.rival.folded::after { content: 'OUT'; position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%) rotate(-12deg); font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .1em; color: var(--bad); border: 3px solid var(--bad); border-radius: 6px; padding: 0 6px; background: rgba(10,15,26,.7); }
+.banner { position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); white-space: nowrap; font-family: var(--display); font-weight: 800; letter-spacing: .1em; font-size: 16px; padding: 2px 10px; border-radius: 6px; opacity: 0; pointer-events: none; }
+.banner.snipe { background: #ff5d5d; color: #1a0000; }
+.banner.war { background: #ff9a3c; color: #1a0a00; }
+.banner.show { animation: banner 1.6s both; }
+@keyframes banner { 0% { opacity: 0; transform: translateX(-50%) scale(.6); } 12% { opacity: 1; transform: translateX(-50%) scale(1.1); } 22% { transform: translateX(-50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
+.price { margin-bottom: 14px; }
+/* ---------- reveal juice ---------- */
+.case3d { align-self: center; width: 150px; height: 74px; position: relative; perspective: 500px; margin: -2px 0 4px; }
+.case3d .base { position: absolute; left: 0; right: 0; bottom: 0; height: 54px; border-radius: 10px; background: linear-gradient(#2f8f83, #1f6159); box-shadow: 0 10px 20px rgba(0,0,0,.4); display: grid; place-items: center; }
+.case3d .base b { background: #f4e9c8; color: #1a1400; font-family: var(--display); font-size: 13px; padding: 1px 6px; border-radius: 3px; }
+.case3d .lid { position: absolute; left: 0; right: 0; bottom: 50px; height: 22px; border-radius: 10px 10px 4px 4px; background: linear-gradient(#3aa99b, #2f8f83); transform-origin: 50% 100%; transition: transform .55s cubic-bezier(.2,1.4,.4,1); }
+.case3d .lid i { position: absolute; left: 38%; right: 38%; top: -10px; height: 12px; border: 4px solid #1b3b37; border-bottom: 0; border-radius: 8px 8px 0 0; }
+.case3d.open .lid { transform: rotateX(-118deg); }
+.case3d.open .base { box-shadow: inset 0 12px 18px rgba(0,0,0,.55), 0 10px 20px rgba(0,0,0,.4); }
+.case3d.tier1 .base { background: linear-gradient(#2b4c7e, #1c3357); } .case3d.tier1 .lid { background: linear-gradient(#3a62a0, #2b4c7e); }
+.case3d.tier2 .base { background: linear-gradient(#7a1f3d, #521429); } .case3d.tier2 .lid { background: linear-gradient(#9b2a50, #7a1f3d); }
+.item.pop { animation: itempop .42s cubic-bezier(.2,1.6,.4,1); }
+@keyframes itempop { 0% { transform: translateY(-40px) scale(.4); } 60% { transform: translateY(4px) scale(1.08); } 100% { transform: none; } }
+.item.wobble { animation: wobble var(--wobble, .45s) ease-in-out; }
+.item.tell-rare { box-shadow: 0 0 22px rgba(74,168,255,.8); }
+.item.tell-epic { box-shadow: 0 0 28px rgba(176,108,255,.9); }
+.item.tell-legendary { box-shadow: 0 0 40px rgba(255,200,61,1); background: #3a3010; }
+.rays { position: fixed; inset: -50%; z-index: 25; pointer-events: none; background: repeating-conic-gradient(from 0deg, rgba(255,200,61,.22) 0 8deg, transparent 8deg 20deg); animation: rays 1.8s ease-out both; mix-blend-mode: screen; }
+@keyframes rays { 0% { opacity: 0; transform: rotate(0) scale(.6); } 20% { opacity: 1; } 100% { opacity: 0; transform: rotate(40deg) scale(1.1); } }
+.ticker { overflow: hidden; background: #10151f; border: 1px solid #1d2a43; border-radius: 10px; height: 30px; display: flex; align-items: center; }
+.ticker .track { white-space: nowrap; font-family: var(--display); font-weight: 700; letter-spacing: .05em; font-size: 15px; color: var(--sign); padding-left: 100%; animation: marquee 38s linear infinite; }
+@keyframes marquee { to { transform: translateX(-100%); } }

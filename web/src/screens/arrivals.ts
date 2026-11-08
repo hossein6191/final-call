@@ -8,6 +8,7 @@ let tab = 0;
 export function arrivals(root: HTMLElement) {
   root.innerHTML = `
   <div class="screen">
+    <div class="ticker" id="ticker"><div class="track" id="track">Loading the floor…</div></div>
     <div class="h1">Arrivals</div>
     <div class="small muted">Bags nobody came back for. Each one's contents were sealed on NEAR before it hit the board.</div>
     <div class="tabs" id="tabs"></div>
@@ -57,10 +58,31 @@ export function arrivals(root: HTMLElement) {
     if (tutorial) tab = 0;
     if (alive) draw(bags);
   };
+  const news = async () => {
+    const b = await api('/board').catch(() => null);
+    if (!b || !alive) return;
+    const c = state.cfg!.contract;
+    const who = (acc: string) => b.people.find((p: any) => p.account === acc)?.name ?? acc.split('.')[0];
+    const lines: string[] = [];
+    for (const e of b.feed.slice(0, 14)) {
+      if (e.kind === 'lot' && e.winner) lines.push(`${who(e.winner)} wins lot ${String(e.id).slice(-4)} for ${fmt(e.price)} MI`);
+      if (e.kind === 'rival_sold') lines.push(`${who(`${e.rival}.${c}`)} dumps a bag on the dealer for ${fmt(e.total)}`);
+      if (e.kind === 'grounded') lines.push(`BREAKING: ${who(`${e.rival}.${c}`)} is broke and grounded`);
+      if (e.kind === 'loan') lines.push(`The House bails out ${who(`${e.rival}.${c}`)} with ${fmt(e.amount)} MI`);
+      if (e.kind === 'order') lines.push(`${who(`${e.rival}.${c}`)} is hunting: pays ${fmt(e.price)} for the right item`);
+    }
+    const top = b.people[0];
+    if (top) lines.unshift(`Top of the board: ${top.name} at ${fmt(top.netWorth)}`);
+    const track = $('#track', root);
+    if (track) track.textContent = lines.join('   ✈   ') || 'Quiet on the floor. Be the first to bid.';
+  };
   void load();
+  void news();
+  const nt = setInterval(news, 20000);
   const t = setInterval(load, 8000);
   return () => {
     alive = false;
     clearInterval(t);
+    clearInterval(nt);
   };
 }
