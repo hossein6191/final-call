@@ -6,8 +6,9 @@ import { TERMINALS } from '../../../shared/rules.ts';
 import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { AVATARS } from '../avatars.ts';
 import { sound } from '../audio.ts';
-import { passHtml, wirePass, sharePass, type PassInfo } from '../ui/pass.ts';
-import { missions, stampCount, stamps, STAMPS, checkUnlocks } from '../ui/progress.ts';
+import { passHtml, wirePass, sharePass, livenPass, type PassInfo } from '../ui/pass.ts';
+import { missions, stampCount, stamps, STAMPS, checkUnlocks, worthHistory, recordWorth } from '../ui/progress.ts';
+import { worthCardHtml, wireWorth } from '../ui/chart.ts';
 import { ICON, nextTip, hourglassSvg } from '../ui/bits.ts';
 import { coach } from '../ui/coach.ts';
 
@@ -25,6 +26,7 @@ export function carousel() {
 export function home(root: HTMLElement) {
   root.innerHTML = `
   <div class="screen home">
+   <div class="hcol a">
     <div class="home-hero">
       <div class="hero-row"><div class="mini-flap">${[...'FINAL CALL'].map((c, i) => (c === ' ' ? '<i></i>' : `<span style="animation-delay:${i * 60}ms">${c}</span>`)).join('')}</div><div class="clock" id="clock"></div></div>
       ${carousel()}
@@ -32,6 +34,15 @@ export function home(root: HTMLElement) {
     </div>
     <div class="pass-wrap" id="passwrap"></div>
     <button class="play-card" id="play" disabled><div class="pc-l"><small id="playk">NEXT BAG</small><b id="playt">Finding a bag…</b><span id="plays"></span></div><div class="pc-go">${ICON.play}<span>PLAY</span></div></button>
+    <div id="worth" class="worth-slot"></div>
+    <div class="menu-grid">
+      <button data-h="#arrivals">${ICON.plane}<b>Flights</b><small>All bags on the board</small></button>
+      <button data-h="#bags">${ICON.bag}<b>My Bags</b><small>Sell what you found</small></button>
+      <button data-h="#album">${ICON.album}<b>Album</b><small>Items you've found</small></button>
+      <button data-h="#board">${ICON.trophy}<b>Board</b><small>Rankings and the economy</small></button>
+    </div>
+   </div>
+   <div class="hcol b">
     <div class="section-title row"><span class="grow">TODAY'S MISSIONS</span><span class="muted" style="letter-spacing:0;font-family:var(--body);font-weight:500;font-size:11px">new ones every day</span></div>
     <div class="missions" id="missions"></div>
     <div class="section-title row"><span class="grow">PASSPORT STAMPS</span><a href="#album" class="small">see all ›</a></div>
@@ -39,12 +50,7 @@ export function home(root: HTMLElement) {
     <div class="section-title">ON THE FLOOR</div>
     <div class="floor" id="floor"></div>
     <div class="tipcard" id="tip">${hourglassSvg(18)}<span>${esc(nextTip())}</span></div>
-    <div class="menu-grid">
-      <button data-h="#arrivals">${ICON.plane}<b>Flights</b><small>All bags on the board</small></button>
-      <button data-h="#bags">${ICON.bag}<b>My Bags</b><small>Sell what you found</small></button>
-      <button data-h="#album">${ICON.album}<b>Album</b><small>Items you've found</small></button>
-      <button data-h="#board">${ICON.trophy}<b>Board</b><small>Rankings and the economy</small></button>
-    </div>
+   </div>
   </div>`;
 
   root.querySelectorAll<HTMLButtonElement>('[data-h]').forEach((b) => (b.onclick = () => { sound.tap(); go(b.dataset.h!); }));
@@ -60,6 +66,7 @@ export function home(root: HTMLElement) {
   const drawPass = () => {
     const p = state.profile;
     const nw = state.netWorth;
+    if (p) recordWorth(nw);
     const klass = (nw >= TERMINALS[2].unlockNetWorth ? 2 : nw >= TERMINALS[1].unlockNetWorth ? 1 : 0) as 0 | 1 | 2;
     info = {
       name: state.id!.nickname, account: state.id!.account, netWorth: nw, miles: p?.miles ?? 0, klass,
@@ -72,11 +79,17 @@ export function home(root: HTMLElement) {
         <button class="icon-btn" id="share" aria-label="Share your pass">${ICON.share}</button>
       </div>`;
     wirePass(root.querySelector('.pass'));
+    livenPass(root.querySelector('.pass'), klass);
     ($('#share', root) as HTMLButtonElement).onclick = async () => {
       sound.tap();
       if (info && (await sharePass(info)) === 'copied') toast('Copied your pass to the clipboard. Paste it anywhere.');
     };
     checkUnlocks(nw, TERMINALS.map((t) => t.unlockNetWorth));
+    if (p) {
+      const pts = worthHistory();
+      $('#worth', root).innerHTML = worthCardHtml(pts, nw);
+      wireWorth($('#worth', root), pts);
+    }
   };
 
   const drawMissions = () => {

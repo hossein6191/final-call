@@ -15,6 +15,7 @@ interface Store {
   stamps: Record<string, number>; // stamp id -> time earned
   done: string[]; // mission ids completed today
   seen: string[]; // tutorial steps already shown
+  worth?: { t: number; v: number }[]; // net worth over time
 }
 
 const KEY = 'fc:progress';
@@ -152,3 +153,16 @@ export function resetTutorial() {
   store.seen = [];
   save();
 }
+
+// ---------- net worth history (for the chart) ----------
+export function recordWorth(v: number) {
+  const h = (store.worth ??= []);
+  const last = h[h.length - 1];
+  const now = Date.now();
+  if (last && Math.round(last.v) === Math.round(v)) return;
+  if (last && now - last.t < 90_000) last.v = v; // fold quick changes into one point
+  else h.push({ t: now, v });
+  if (h.length > 40) h.splice(0, h.length - 40);
+  save();
+}
+export const worthHistory = () => [...(store.worth ?? [])];

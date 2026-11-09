@@ -9,6 +9,7 @@ import { showSold } from './unzip.ts';
 import { coach, coachOff, coachActive } from '../ui/coach.ts';
 import { track, seen } from '../ui/progress.ts';
 import { nextTip, hourglassSvg } from '../ui/bits.ts';
+import { briefing } from '../ui/briefing.ts';
 
 interface Slot {
   m: ManifestSlot;
@@ -21,6 +22,8 @@ interface Slot {
 }
 
 const SOLD_MS = 5000;
+// Animated bot (from the Lucide Animated bot icon): its eyes blink while the AI talks.
+const BOT = `<svg class="bot" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2"/><line class="eye" x1="15" x2="15" y1="13" y2="15"/><line class="eye" x1="9" x2="9" y1="13" y2="15"/></svg>`;
 const GAVEL = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="14" width="30" height="16" rx="4" transform="rotate(-30 23 22)" fill="#8b5a2b" stroke="#3b2410" stroke-width="2"/><rect x="26" y="26" width="6" height="34" rx="3" transform="rotate(-30 29 43)" fill="#a0522d" stroke="#3b2410" stroke-width="2"/><rect x="34" y="52" width="24" height="6" rx="2" fill="#5c3a1e"/></svg>`;
 const easeOutBack = (t: number) => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
 function paddleNo(acc: string) {
@@ -115,8 +118,9 @@ export function auction(root: HTMLElement, lotId: number) {
     off.width = W;
     off.height = H;
     caseBox = { x: W * 0.07, y: H * 0.16, w: W * 0.86, h: H * 0.74 };
-    covered.length = 0;
-    for (let i = 0; i < 160; i++) covered.push(false);
+    // Coverage is stored as fractions of the width, so it survives a resize.
+    if (!covered.length) for (let i = 0; i < 160; i++) covered.push(false);
+    const prevSlots = slots;
     const n = manifest.length;
     const cols = n <= 6 ? 3 : 4;
     const rows = Math.ceil(n / cols);
@@ -126,7 +130,7 @@ export function auction(root: HTMLElement, lotId: number) {
     slots = manifest.map((m, i) => {
       const cx = caseBox.x + cw * (i % cols) + cw / 2 + (rng() - 0.5) * cw * 0.25;
       const cy = caseBox.y + ch * Math.floor(i / cols) + ch / 2 + (rng() - 0.5) * ch * 0.2;
-      return { m, x: cx, y: cy, size: Math.min(cw, ch) * (0.78 + rng() * 0.12), rot: (rng() - 0.5) * 0.7, revealed: false, tagged: false };
+      return { m, x: cx, y: cy, size: Math.min(cw, ch) * (0.78 + rng() * 0.12), rot: (rng() - 0.5) * 0.7, revealed: prevSlots[i]?.revealed ?? false, tagged: prevSlots[i]?.tagged ?? false };
     });
     renderXray();
   }
@@ -654,6 +658,7 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#who', root).innerHTML = m.by === me ? '<b>You</b> lead' : `<b>${esc(m.name)}</b> leads${m.heat ? ' · <span class="heat">HEAT: DOUBLE STEPS</span>' : ''}`;
         $('#bidv', root).textContent = fmt(next);
         sound.bid(price, m.by === me);
+        document.dispatchEvent(new CustomEvent('fc:bid', { detail: { name: m.by === me ? 'You' : m.name, price, jump: m.jump, snipe: m.snipe, mine: m.by === me, color: (rivalCards.get(m.by)?.querySelector('.nm') as HTMLElement | null)?.style.color } }));
         if (m.by === me) {
           track('bid');
           if (m.jump) track('jump');
@@ -723,6 +728,9 @@ export function auction(root: HTMLElement, lotId: number) {
         }
         break;
       }
+      case 'auction:say':
+        say(m.by, m.line);
+        break;
       case 'auction:refused':
         sound.error();
         toast(esc(m.reason));
@@ -758,11 +766,11 @@ export function auction(root: HTMLElement, lotId: number) {
         toast(`<b>${esc(m.name)}</b> wants your ${esc(m.itemName)}: <b>${fmt(m.price)} MI</b>. Sell it to them in My Bags.`);
         break;
       case 'ai:voices':
-        $('#aichip', root).innerHTML = m.source === 'near-ai' ? '<span class="chip">voices: NEAR AI</span>' : '<span class="chip">voices: scripted</span>';
+        $('#aichip', root).innerHTML = m.source === 'near-ai' ? `<span class="chip ai">${BOT}voices: NEAR AI</span>` : `<span class="chip ai">${BOT}voices: scripted</span>`;
         break;
       case 'ai:verified':
         $('#aichip', root).innerHTML = m.ok
-          ? `<a class="chip ok" href="${esc(m.verifyUrl)}" target="_blank" rel="noopener">✓ voices signed by NEAR AI TEE key</a>`
+          ? `<a class="chip ok ai" href="${esc(m.verifyUrl)}" target="_blank" rel="noopener">${BOT}✓ signed by NEAR AI TEE</a>`
           : `<span class="chip warn">voices unverified</span>`;
         break;
       case 'error':
@@ -802,9 +810,14 @@ export function auction(root: HTMLElement, lotId: number) {
   };
   window.addEventListener('keydown', onKey);
   raf = requestAnimationFrame(draw);
-  void live.send({ type: 'enter', lotId });
+  // How the round works, then the bag rolls in.
+  let left = false;
+  void briefing($('#auctionRoot', root), lotId).then(() => {
+    if (!left) void live.send({ type: 'enter', lotId });
+  });
 
   return () => {
+    left = true;
     offMsg();
     cancelAnimationFrame(raf);
     scanHum(false);

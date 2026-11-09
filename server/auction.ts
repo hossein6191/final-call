@@ -5,7 +5,8 @@ import { AUCTION, increment, itemValue, parseItemToken, publicEstimate, type Man
 import { ITEM_BY_ID } from '../shared/catalog.ts';
 import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, type BagRow } from './db.ts';
 import { house, panicMessage, rival as rivalTx, txUrl, view } from './chain.ts';
-import { voiceRivals, scriptedLines, type Lines, type Voiced } from './ai.ts';
+import { voiceRivals, scriptedLines, type Voiced } from './ai.ts';
+import { Voice, type Moment } from './banter.ts';
 import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
 
 // 1.2 s for the bag to roll into the X-ray tunnel, then 6 s of scanning.
@@ -28,6 +29,7 @@ interface Seat {
   jumped: boolean;
   twitched: boolean;
   grudge: number; // bags this player has taken off this rival
+  voice?: Voice;
 }
 
 export interface AuctionResult {
@@ -62,6 +64,9 @@ export class Auction {
   private timer: NodeJS.Timeout | null = null;
   private playerMiles: number;
   private tutorial = false;
+  private seenItem = '';
+  private saidHeat = false;
+  private saidDuel = false;
   private playerHasBid = false;
   private send: Send;
   private onDone: (r: AuctionResult) => void;
@@ -93,6 +98,14 @@ export class Auction {
       this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: mem.player_wins });
     }
     this.voiced = { source: 'scripted', lines: scriptedLines(lineup.map((r) => r.def), player.nickname) };
+    for (const s of this.rivals) s.voice = new Voice(s.rival!.def, this.voiced.lines[s.rival!.def.sub]);
+    const seen = this.manifest.filter((m) => !m.pouch && m.id).map((m) => ITEM_BY_ID[m.id!].name);
+    this.seenItem = seen[Math.floor(Math.random() * seen.length)] ?? '';
+  }
+
+  /** What a rival says at this moment (or nothing: they do not talk on every bid). */
+  private talk(s: Seat, m: Moment, opts: { force?: boolean; chance?: number } = {}) {
+    return s.voice?.say(m, { player: this.player.name, price: this.price, item: this.seenItem }, opts);
   }
 
   get rivals() {
@@ -113,6 +126,7 @@ export class Auction {
       .join('; ');
     voiceRivals(lineup, xrayText(this.manifest), this.player.name, memory).then((v) => {
       this.voiced = v;
+      for (const s of this.rivals) s.voice?.setAi(v.lines[s.rival!.def.sub]);
       v.verification?.then((ver) => {
         setBag(this.bag.id, { ai: JSON.stringify({ source: v.source, completionId: v.completionId, verification: ver, error: v.error ?? null }) });
         if (ver) this.send({ type: 'ai:verified', lotId: this.bag.id, ok: ver.ok, verifyUrl: ver.verifyUrl, signingAddress: ver.signingAddress });
@@ -165,10 +179,6 @@ export class Auction {
     return this.leader ? this.price + 3 * step : this.price + 2 * step;
   }
 
-  private linesFor(s: Seat): Lines | undefined {
-    return s.rival ? this.voiced.lines[s.rival.def.sub] : undefined;
-  }
-
   private accept(s: Seat, amount: number, jump: boolean) {
     if (s === this.player) this.playerHasBid = true;
     const prevLeader = this.leader;
@@ -184,11 +194,29 @@ export class Auction {
       x.planAt = null;
       x.twitched = false;
     }
-    const l = this.linesFor(s);
-    const line = l ? (s.bids === 1 ? l.open : Math.random() < 0.4 ? l.raise : undefined) : undefined;
+    let line: string | undefined;
+    if (s.rival) {
+      const heat = this.heat();
+      if (s.bids === 1) line = this.talk(s, 'open', { force: true });
+      else if (snipe) line = this.talk(s, 'snipe', { force: true });
+      else if (jump) line = this.talk(s, 'jump', { chance: 0.9 });
+      else if (heat && !this.saidHeat && (line = this.talk(s, 'heat', { chance: 0.8 }))) this.saidHeat = true;
+      else if (this.war >= 3) line = this.talk(s, 'war', { chance: 0.5 });
+      else if (prevLeader === this.player) line = this.talk(s, 'counter', { chance: 0.55 });
+      else if (amount > s.estimate * 0.85) line = this.talk(s, 'high', { chance: 0.5 });
+      else line = this.talk(s, 'raise', { chance: 0.3 });
+    }
     this.send({ type: 'auction:bid', by: s.id, name: s.name, price: amount, jump, line, next: this.nextPrice(), heat: this.heat(), snipe, war: this.war, outbid: prevLeader?.id ?? null });
     // A bluffer caught by a jump often folds.
     if (jump && prevLeader?.rival?.def.style === 'bluffer' && Math.random() < 0.6) this.fold(prevLeader);
+  }
+
+  /** When the player wins, one rival at the table has a word about it. */
+  private loserReaction() {
+    const r = this.rivals[Math.floor(Math.random() * this.rivals.length)];
+    if (!r) return undefined;
+    const line = this.talk(r, 'lose', { force: true });
+    return line ? { by: r.id, name: r.name, line } : undefined;
   }
 
   /** A first bag gets twice the scan time: the coach is teaching dragging and tapping. */
@@ -215,7 +243,16 @@ export class Auction {
   private fold(s: Seat) {
     if (s.folded) return;
     s.folded = true;
-    this.send({ type: 'auction:fold', by: s.id, name: s.name, line: this.linesFor(s)?.fold });
+    const line = this.talk(s, this.leader === this.player ? 'foldToPlayer' : 'fold', { force: true });
+    this.send({ type: 'auction:fold', by: s.id, name: s.name, line });
+    // Down to two: the rival still in has something to say about it.
+    const left = this.seats.filter((x) => !x.folded);
+    if (!this.saidDuel && left.length === 2 && left.includes(this.player)) {
+      const r = left.find((x) => x !== this.player)!;
+      const duel = this.talk(r, 'duel', { force: true });
+      this.saidDuel = true;
+      if (duel) setTimeout(() => this.phase === 'live' && this.send({ type: 'auction:say', by: r.id, line: duel }), 1300);
+    }
   }
 
   /** When a rival would act next, in ms after now. Uses the public tells from the design doc. */
@@ -325,7 +362,8 @@ export class Auction {
       winner: winner?.id ?? null,
       winnerName: winner?.name ?? null,
       price: winner ? this.price : 0,
-      line: winner ? this.linesFor(winner)?.win : undefined,
+      line: winner?.rival ? this.talk(winner, this.price < winner.estimate * 0.6 ? 'winCheap' : this.price > winner.estimate ? 'winBig' : 'win', { force: true }) : undefined,
+      reaction: winner === this.player ? this.loserReaction() : undefined,
       items: reveal,
       tokens: items,
       salt: this.bag.salt,

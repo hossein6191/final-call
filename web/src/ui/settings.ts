@@ -3,6 +3,7 @@ import { state, accLink, esc, toast } from '../state.ts';
 import { getVolume, setVolume, isMuted, toggleMute, unlock, sound } from '../audio.ts';
 import { replayTutorial } from './coach.ts';
 import { showHowto } from '../screens/howto.ts';
+import { briefingOff, setBriefing } from './briefing.ts';
 
 const SPEAKER = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>`;
 const NOTE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
@@ -14,6 +15,35 @@ function slider(id: string, label: string, icon: string, value: number) {
 function toggle(id: string, label: string, on: boolean, sub = '') {
   return `<div class="set-row"><span class="set-lbl">${label}${sub ? `<small>${sub}</small>` : ''}</span>
     <button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}"><i></i></button></div>`;
+}
+
+/** Elastic slider (from the volume slider component): drag past an end and the track
+ *  stretches with a sigmoid pull, then springs back on release. */
+function elastic(r: HTMLInputElement, icon: HTMLElement | null, signal: AbortSignal) {
+  const MAX = 50;
+  const decay = (v: number) => (2 * (1 / (1 + Math.exp(-v / MAX)) - 0.5)) * MAX;
+  let active = false;
+  r.addEventListener('pointerdown', () => {
+    active = true;
+    r.classList.add('grab');
+  }, { signal });
+  window.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    const b = r.getBoundingClientRect();
+    const left = e.clientX < b.left;
+    const over = left ? b.left - e.clientX : Math.max(0, e.clientX - b.right);
+    const o = decay(over);
+    r.style.transformOrigin = left ? 'right center' : 'left center';
+    r.style.transform = `scaleX(${(1 + o / b.width).toFixed(4)}) scaleY(${(1 - (0.25 * o) / MAX).toFixed(3)})`;
+    if (icon) icon.style.transform = left && o > 1 ? `translateX(${-o}px) scale(1.2)` : '';
+  }, { signal });
+  window.addEventListener('pointerup', () => {
+    if (!active) return;
+    active = false;
+    r.classList.remove('grab');
+    r.style.transform = '';
+    if (icon) icon.style.transform = '';
+  }, { signal });
 }
 
 export function showSettings() {
@@ -31,6 +61,9 @@ export function showSettings() {
         ${toggle('shap', 'Vibration', v.haptics, 'Phones only')}
       </div>
       <div class="panel set">
+        ${toggle('sbrief', 'Round briefing', !briefingOff(), 'The how-it-works box before each bag')}
+      </div>
+      <div class="panel set">
         <button class="set-row link" id="shelp"><span class="set-lbl">How to play</span><span>›</span></button>
         <button class="set-row link" id="stut"><span class="set-lbl">Replay the tutorial<small>The coach comes back on your next bag</small></span><span>›</span></button>
       </div>
@@ -41,7 +74,11 @@ export function showSettings() {
       <button class="btn primary" id="sdone">DONE</button>
     </div>`;
   document.body.appendChild(el);
-  const close = () => el.remove();
+  const ac = new AbortController();
+  const close = () => {
+    ac.abort();
+    el.remove();
+  };
   el.addEventListener('click', (e) => e.target === el && close());
   (el.querySelector('#sx') as HTMLButtonElement).onclick = close;
   (el.querySelector('#sdone') as HTMLButtonElement).onclick = () => {
@@ -64,6 +101,7 @@ export function showSettings() {
     document.dispatchEvent(new CustomEvent('mute'));
   });
   sw('shap', (on) => setVolume({ haptics: on }));
+  sw('sbrief', (on) => setBriefing(on));
   const rng = (id: string, key: 'music' | 'sfx') => {
     const r = el.querySelector(`#${id}`) as HTMLInputElement;
     r.oninput = () => {
@@ -75,6 +113,7 @@ export function showSettings() {
   };
   rng('smusic', 'music');
   rng('ssfx', 'sfx');
+  el.querySelectorAll<HTMLInputElement>('.range').forEach((r) => elastic(r, r.parentElement!.querySelector('.set-ico'), ac.signal));
   (el.querySelector('#shelp') as HTMLButtonElement).onclick = () => {
     close();
     showHowto();

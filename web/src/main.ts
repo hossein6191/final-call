@@ -14,9 +14,13 @@ import { showHowto } from './screens/howto.ts';
 import { showSettings } from './ui/settings.ts';
 import { ICON } from './ui/bits.ts';
 import { coachOff } from './ui/coach.ts';
+import { mountSide, wide } from './ui/side.ts';
+import { installEsc } from './ui/menu.ts';
+import { recordWorth } from './ui/progress.ts';
 
 const app = $('#app');
 let cleanup: (() => void) | void;
+let sideOff: () => void = () => {};
 
 const NAV: [string, string, keyof typeof ICON][] = [
   ['home', 'HOME', 'home'],
@@ -26,7 +30,22 @@ const NAV: [string, string, keyof typeof ICON][] = [
   ['board', 'BOARD', 'trophy'],
 ];
 
+/** On a computer the side menu magnifies under the mouse, like a dock. */
+function magnify(dock: HTMLElement) {
+  const btns = [...dock.querySelectorAll('button')] as HTMLElement[];
+  dock.addEventListener('mousemove', (e) => {
+    if (!wide()) return;
+    for (const b of btns) {
+      const r = b.getBoundingClientRect();
+      const k = Math.max(0, 1 - Math.abs(e.clientY - (r.top + r.height / 2)) / 130);
+      b.style.transform = `translateX(${(k * 8).toFixed(1)}px) scale(${(1 + 0.34 * k).toFixed(3)})`;
+    }
+  });
+  dock.addEventListener('mouseleave', () => btns.forEach((b) => (b.style.transform = '')));
+}
+
 function shell(active: string) {
+  app.className = 'app-main';
   app.innerHTML = `
     <div class="topbar">
       <button class="brand" id="brand">FINAL CALL <span class="tag">TESTNET</span></button>
@@ -37,7 +56,10 @@ function shell(active: string) {
     <div id="view"></div>
     <nav class="dock" aria-label="Main">
       ${NAV.map(([id, label, icon]) => `<button data-go="#${id}" class="${active === id ? 'on' : ''}">${ICON[icon]}<span>${label}</span>${id === 'bags' && state.pending.length ? '<i class="dot"></i>' : ''}</button>`).join('')}
-    </nav>`;
+    </nav>
+    <aside class="sidepanel" id="side" aria-label="The floor"></aside>`;
+  sideOff = mountSide($('#side'), 'floor');
+  magnify($('.dock'));
   ($('#help') as HTMLButtonElement).onclick = () => showHowto();
   ($('#gear') as HTMLButtonElement).onclick = () => { unlock(); sound.tap(); showSettings(); };
   ($('#brand') as HTMLButtonElement).onclick = () => (location.hash = '#home');
@@ -55,13 +77,16 @@ async function nextBag() {
 }
 
 function auctionShell() {
+  app.className = 'app-table';
   app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="back" aria-label="Back">←</button>
       <div class="brand">FINAL CALL</div>
       <div id="wallet">${walletHtml()}</div>
     </div>
-    <div id="view" style="flex:1;display:flex;flex-direction:column"></div>`;
+    <div id="view" style="flex:1;display:flex;flex-direction:column"></div>
+    <aside class="sidepanel" id="side" aria-label="The table"></aside>`;
+  sideOff = mountSide($('#side'), 'table');
   ($('#back') as HTMLButtonElement).onclick = () => {
     void live.send({ type: 'fold' });
     location.hash = '#home';
@@ -72,6 +97,7 @@ function auctionShell() {
 document.addEventListener('me', () => {
   const w = document.getElementById('wallet');
   if (w) w.innerHTML = walletHtml();
+  if (state.profile) recordWorth(state.netWorth);
 });
 
 let connectedAs = '';
@@ -86,6 +112,9 @@ function route() {
   ensureConnected();
   if (typeof cleanup === 'function') cleanup();
   cleanup = undefined;
+  sideOff();
+  sideOff = () => {};
+  app.className = '';
   coachOff();
   document.querySelectorAll('.overlay').forEach((o) => o.remove());
   const [name, arg] = location.hash.replace(/^#/, '').split('/');
@@ -123,6 +152,7 @@ async function payLeftovers() {
 async function boot() {
   state.cfg = await api('/config');
   window.addEventListener('hashchange', route);
+  installEsc();
   const start = () => {
     unlock();
     startMusic();

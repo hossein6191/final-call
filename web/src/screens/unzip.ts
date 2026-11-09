@@ -62,7 +62,7 @@ export function showSold(m: any) {
       <div class="case3d tier${m.tier}" id="case3d"><div class="lid"><i></i></div><div class="base"><b>${esc(m.flight?.code ?? '')}</b></div></div>
       <div class="result-line">${
         won
-          ? `You won ${esc(m.flight?.code ?? '')} for <b>${fmt(m.price)} MI</b>`
+          ? `You won ${esc(m.flight?.code ?? '')} for <b>${fmt(m.price)} MI</b>${m.reaction ? `<div class="reaction"><b>${esc(m.reaction.name)}:</b> “${esc(m.reaction.line)}”</div>` : ''}`
           : m.winner
             ? `<b>${esc(m.winnerName)}</b> took it for <b>${fmt(m.price)} MI</b>${m.line ? ` · “${esc(m.line)}”` : ''}`
             : 'Nobody bid. The bag goes back to storage.'

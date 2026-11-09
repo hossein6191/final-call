@@ -1,6 +1,7 @@
 // The player's boarding pass: a ticket with punched notches, a perforated stub, and a
 // dithered print texture. Its class follows the best terminal the player has unlocked.
 import { esc, fmt } from '../state.ts';
+import { mountDither } from './dither.ts';
 
 export interface PassInfo {
   name: string;
@@ -15,10 +16,36 @@ export interface PassInfo {
 }
 
 const CLASSES = [
-  { name: 'ECONOMY', back: [239, 132, 28], front: [255, 214, 140], hi: [255, 168, 72], ink: '#3a1f08', water: '#ffe2c4' },
-  { name: 'BUSINESS', back: [36, 78, 150], front: [140, 186, 255], hi: [86, 132, 214], ink: '#06132b', water: '#cfe0ff' },
-  { name: 'FIRST', back: [110, 22, 52], front: [240, 196, 92], hi: [170, 52, 86], ink: '#ffe9a8', water: '#f6d27a' },
+  { name: 'ECONOMY', back: [239, 132, 28], front: [255, 214, 140], hi: [255, 168, 72], ink: '#4a2410', water: '#ffe2c4', glBack: '#ef671c', glFront: '#ffc691' },
+  { name: 'BUSINESS', back: [36, 78, 150], front: [140, 186, 255], hi: [86, 132, 214], ink: '#06132b', water: '#cfe0ff', glBack: '#2a5bb0', glFront: '#a9c9ff' },
+  { name: 'FIRST', back: [194, 58, 90], front: [255, 217, 138], hi: [170, 52, 86], ink: '#2a0612', water: '#ffe6a8', glBack: '#b83052', glFront: '#ffd98a' },
 ];
+
+// One live shader canvas, moved into each freshly drawn pass so re-renders keep it running.
+let live: { host: HTMLElement; klass: number; stop: () => void } | null = null;
+
+/** Swaps the pass's static texture for the animated dithering shader (WebGL2). */
+export function livenPass(passEl: HTMLElement | null, klass: number) {
+  if (!passEl) return;
+  const slot = passEl.querySelector('.pass-tex') as HTMLElement | null;
+  if (!slot) return;
+  if (!live || live.klass !== klass) {
+    live?.stop();
+    live = null;
+    const host = document.createElement('div');
+    host.className = 'pass-tex live';
+    slot.replaceWith(host);
+    const c = CLASSES[klass];
+    const stop = mountDither(host, { back: c.glBack, front: c.glFront, shape: 'warp', size: 0.75, speed: 0.4 });
+    if (!stop) {
+      host.replaceWith(slot); // no WebGL2: keep the printed texture
+      return;
+    }
+    live = { host, klass, stop };
+    return;
+  }
+  slot.replaceWith(live.host);
+}
 
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const cache = new Map<number, string>();
