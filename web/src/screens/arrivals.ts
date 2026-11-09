@@ -77,6 +77,7 @@ export function arrivals(root: HTMLElement) {
       if (e.kind === 'rival_sold') lines.push(`${who(`${e.rival}.${c}`)} dumps a bag on the dealer for ${fmt(e.total)}`);
       if (e.kind === 'grounded') lines.push(`BREAKING: ${who(`${e.rival}.${c}`)} is broke and grounded`);
       if (e.kind === 'loan') lines.push(`The House bails out ${who(`${e.rival}.${c}`)} with ${fmt(e.amount)} MI`);
+      if (e.kind === 'backed') lines.push(`${e.name} backs ${who(`${e.rival}.${c}`)} with ${fmt(e.amount)} MI and reopens their shop`);
       if (e.kind === 'player_loan') lines.push(`${who(e.account)} takes an emergency loan from the House`);
       if (e.kind === 'order') lines.push(`${who(`${e.rival}.${c}`)} is hunting: pays ${fmt(e.price)} for the right item`);
     }

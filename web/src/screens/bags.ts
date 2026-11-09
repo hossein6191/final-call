@@ -52,6 +52,7 @@ export function bags(root: HTMLElement) {
   <div class="screen">
     <div class="h1">My Bags</div>
     <div id="pending"></div>
+    <div id="stakes"></div>
     <div class="small muted" id="acct"></div>
     <div class="inv" id="inv"><div class="locked"><span class="spinner"></span></div></div>
   </div>`;
@@ -61,8 +62,14 @@ export function bags(root: HTMLElement) {
   const busy = new Set<string>();
 
   const render = async () => {
-    const [, mk] = await Promise.all([refreshMe(), api('/market')]);
+    const [, mk, st] = await Promise.all([refreshMe(), api('/market'), api(`/stakes?account=${encodeURIComponent(state.id!.account)}`).catch(() => null)]);
     if (!alive) return;
+    const mine: any[] = st?.mine ?? [];
+    $('#stakes', root).innerHTML = mine.length
+      ? `<div class="section-title">YOUR STAKES IN RIVALS</div>${mine
+          .map((x) => `<div class="stake"><div class="grow"><b>${esc(x.name)}</b><small>You put in ${fmt(x.invested)} · owed ${fmt(x.owed)} · paid back ${fmt(x.paid)}</small><div class="ubar"><i style="width:${(x.paid / x.owed) * 100}%"></i></div></div><span>${fmt(x.owed - x.paid)}<small>MI to come</small></span></div>`)
+          .join('')}<div class="small muted">The contract pays you half of whatever each rival earns at the dealer until you are paid back.</div>`
+      : '';
     const p = state.profile;
     const demand = new Map<string, number>(mk.market.map((r: any) => [r.item_id, r.demand_bp]));
     demandNow = demand;

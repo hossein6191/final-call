@@ -2,14 +2,29 @@
 
 const SKIN = ['#f2c7a5', '#c98e63', '#8d5a3b', '#f5d6c0', '#a8714f', '#e6b08a'];
 
+// Every face carries hidden expression layers (brows, mouths, a sweat drop) that the
+// auction switches on with a class: expr-happy, expr-angry, expr-think, expr-shock, expr-sad.
+const FX = `<g class="fx" stroke="#5a2e1d" stroke-width="2" fill="none" stroke-linecap="round">
+    <path class="b-angry" d="M22.5 25.5l7 2.6M41.5 25.5l-7 2.6" stroke="#2a1a10" stroke-width="2.2"/>
+    <path class="b-up" d="M22.5 26q4-3.2 8 0M33.5 26q4-3.2 8 0" stroke="#2a1a10"/>
+    <path class="b-sad" d="M23 27.5l7-2.2M41 27.5l-7-2.2" stroke="#2a1a10"/>
+    <path class="m-smile" d="M25 42q7 7.5 14 0" fill="#7a2a1a" stroke-width="1.6"/>
+    <path class="m-frown" d="M26.5 46.5q5.5-4.5 11 0"/>
+    <path class="m-flat" d="M28 44.5h8"/>
+    <ellipse class="m-o" cx="32" cy="44.5" rx="2.8" ry="3.6" fill="#3a1408" stroke-width="1.4"/>
+    <path class="sweat" d="M44.5 22q2.6 4.2 0 6.2q-2.6-2 0-6.2z" fill="#8fd6ff" stroke="none"/>
+    <path class="steam" d="M15 18q-2-3 1-5M49 18q2-3-1-5" stroke="#ff6b6b" stroke-width="1.8"/>
+  </g>`;
+
 function face(skin: string, extra: string, bg: string, mouth = 'M26 44q6 4 12 0'): string {
   return `<svg viewBox="0 0 64 64" class="face" aria-hidden="true">
     <circle cx="32" cy="32" r="31" fill="${bg}"/>
     <path d="M14 64c2-12 9-18 18-18s16 6 18 18z" fill="rgba(0,0,0,.25)"/>
     <ellipse cx="32" cy="32" rx="14" ry="16" fill="${skin}"/>
-    <circle cx="26.5" cy="31" r="1.8" fill="#1b1b1b"/><circle cx="37.5" cy="31" r="1.8" fill="#1b1b1b"/>
-    <path d="${mouth}" stroke="#5a2e1d" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <g class="eyes"><circle cx="26.5" cy="31" r="1.8" fill="#1b1b1b"/><circle cx="37.5" cy="31" r="1.8" fill="#1b1b1b"/></g>
+    <path class="m-def" d="${mouth}" stroke="#5a2e1d" stroke-width="2" fill="none" stroke-linecap="round"/>
     ${extra}
+    ${FX}
   </svg>`;
 }
 

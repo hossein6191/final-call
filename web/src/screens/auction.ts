@@ -514,6 +514,16 @@ export function auction(root: HTMLElement, lotId: number) {
     box.querySelectorAll<HTMLElement>('.rival').forEach((el) => rivalCards.set(el.dataset.acc!, el));
   }
 
+  /** Shows an expression on a rival's face for a moment (or until changed, if ms is 0). */
+  function mood(account: string, expr: 'happy' | 'angry' | 'think' | 'shock' | 'sad', ms = 1400) {
+    const card = rivalCards.get(account);
+    if (!card) return;
+    card.classList.remove('expr-happy', 'expr-angry', 'expr-think', 'expr-shock', 'expr-sad');
+    card.classList.add(`expr-${expr}`);
+    clearTimeout((card as any)._mood);
+    if (ms) (card as any)._mood = setTimeout(() => card.classList.remove(`expr-${expr}`), ms);
+  }
+
   function say(account: string, line?: string) {
     const card = rivalCards.get(account);
     if (!card || !line) return;
@@ -659,6 +669,10 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#bidv', root).textContent = fmt(next);
         sound.bid(price, m.by === me);
         document.dispatchEvent(new CustomEvent('fc:bid', { detail: { name: m.by === me ? 'You' : m.name, price, jump: m.jump, snipe: m.snipe, mine: m.by === me, color: (rivalCards.get(m.by)?.querySelector('.nm') as HTMLElement | null)?.style.color } }));
+        if (m.by !== me) mood(m.by, m.snipe || m.jump ? 'happy' : (m.war ?? 0) >= 3 ? 'angry' : 'happy', 1200);
+        if (m.outbid && m.outbid !== me) mood(m.outbid, m.snipe ? 'shock' : 'angry', 1500);
+        if (m.by === me && m.jump) for (const a of rivalCards.keys()) if (a !== m.outbid) mood(a, 'shock', 1100);
+        if (m.by === me && m.outbid && m.outbid !== me) mood(m.outbid, m.snipe ? 'shock' : 'angry', 1600);
         if (m.by === me) {
           track('bid');
           if (m.jump) track('jump');
@@ -694,6 +708,7 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'auction:think': {
         const card = rivalCards.get(m.by);
         card?.classList.add('thinking');
+        mood(m.by, 'think', 1400);
         coach({ step: 'a-think', target: card ?? null, title: 'They are thinking', text: 'Those dots mean a rival hesitates. They are close to their limit, so one more bid may win it.', ms: 3200 });
         setTimeout(() => card?.classList.remove('thinking'), 1400);
         break;
@@ -711,6 +726,7 @@ export function auction(root: HTMLElement, lotId: number) {
         const card = rivalCards.get(m.by);
         card?.classList.add('folded');
         card?.classList.remove('thinking');
+        mood(m.by, 'sad', 0);
         say(m.by, m.line);
         active.delete(m.by);
         if (active.size === 2 && phase === 'live') {
@@ -738,6 +754,7 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'auction:sold':
         phase = 'sold';
         coachOff();
+        for (const a of rivalCards.keys()) mood(a, a === m.winner ? 'happy' : m.winner === me ? 'angry' : 'sad', 0);
         if (m.winner === me) {
           track('win');
           if (myLastSnipe) track('snipe');

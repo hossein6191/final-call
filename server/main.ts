@@ -10,7 +10,7 @@ import { db, getBag, setBag, recentFeed, addFeed, type BagRow } from './db.ts';
 import { house, panicMessage, provider, txUrl, view } from './chain.ts';
 import { arrivals, claimBag, fillPool, sealTutorialBag, toPublic } from './bags.ts';
 import { Auction } from './auction.ts';
-import { economyTick, pickLineup, rivalWon, rivals, syncRivals } from './rivals.ts';
+import { economyTick, pickLineup, rivalWon, rivals, syncRival, syncRivals } from './rivals.ts';
 import { RIVALS } from '../shared/rivals.ts';
 import { ITEM_BY_ID, LADDER } from '../shared/catalog.ts';
 import { COND_BP, TERMINALS } from '../shared/rules.ts';
@@ -71,6 +71,7 @@ async function board() {
         account: p.account_id, name: p.nickname, rival: p.rival, color: r?.color ?? null, title: r?.title ?? null,
         miles: p.miles, items, debt: p.debt, netWorth: p.miles + items - p.debt, won: p.lots_won, spent: p.spent, earned: p.earned,
         grounded: r ? (rivals.get(r.sub)!.groundedUntil > Date.now() || p.miles < 100) : false,
+        groundedUntil: r ? rivals.get(r.sub)!.groundedUntil : 0,
       };
     })
     .sort((a, b) => b.netWorth - a.netWorth);
@@ -221,6 +222,32 @@ const server = createServer(async (req, res) => {
       } finally {
         loanInFlight.delete(account);
       }
+    }
+    if (p === '/api/stakes') {
+      // Every stake a player holds in the rivals, read from the contract.
+      const account = url.searchParams.get('account') ?? '';
+      const all = await Promise.all([...rivals.values()].map(async (r) => ({ r, list: (await view<any[]>('stakes', { rival_id: r.account }).catch(() => [])) ?? [] })));
+      const mine = all.flatMap(({ r, list }) => list.filter((x) => x.backer === account).map((x) => ({ rival: r.account, name: r.def.name, invested: x.invested, owed: x.owed, paid: x.paid })));
+      const backers = Object.fromEntries(all.map(({ r, list }) => [r.account, list.length]));
+      return json(res, 200, { mine, backers });
+    }
+    if (p === '/api/backed' && req.method === 'POST') {
+      // A player backed a broke rival on chain: refresh that rival now and tell the floor.
+      const body = await readBody(req);
+      const r = [...rivals.values()].find((x) => x.account === body.rival);
+      if (!r) return json(res, 404, { error: 'no such rival' });
+      const wasBroke = r.miles < 100;
+      await syncRival(r).catch(() => {});
+      const list: any[] = (await view<any[]>('stakes', { rival_id: r.account }).catch(() => [])) ?? [];
+      const stake = [...list].reverse().find((x) => x.backer === body.account);
+      // Announce once: only when this call is what reopened the rival.
+      if (stake && wasBroke && r.miles >= 100) {
+        r.groundedUntil = 0;
+        const nick = (db.prepare('SELECT nickname FROM players WHERE account_id = ?').get(String(body.account)) as any)?.nickname ?? 'A traveller';
+        addFeed('backed', { rival: r.def.sub, account: body.account, name: nick, amount: stake.invested });
+        boardCache.at = 0;
+      }
+      return json(res, 200, { miles: r.miles, ok: Boolean(stake) });
     }
     if (p === '/api/found') {
       // Every item the player has ever won (from closed lots, whose contents are public on chain).

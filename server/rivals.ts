@@ -122,7 +122,9 @@ export function rivalWon(r: RivalState, lotId: number, onPaid: (hash: string, to
 
 // ---------- life between auctions ----------
 
-const GROUND_MS = 30 * 60 * 1000;
+// A broke rival closes up shop until a player backs them (contract: invest). If nobody does,
+// the House lends them 500 miles after three hours so the floor never empties for good.
+export const GROUND_MS = 3 * 60 * 60 * 1000;
 
 export async function economyTick() {
   await syncRivals();
@@ -132,7 +134,7 @@ export async function economyTick() {
   const demand = new Map(market.map((m) => [m.item_id, m.demand_bp as number]));
 
   for (const r of rivals.values()) {
-    // Broke rivals sit out, then borrow from the House.
+    // Broke rivals sit out until a player backs them; the House bails them out as a last resort.
     if (r.miles < 100 && r.committed === 0) {
       if (!r.groundedUntil) {
         r.groundedUntil = now + GROUND_MS;

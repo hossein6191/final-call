@@ -23,7 +23,7 @@ use near_sdk::{
 pub const START_MILES: u64 = 1_000;
 /// Methods a player's key may call. Everything that spends a player's miles or items is here,
 /// so only the player can trigger it.
-pub const PLAYER_METHODS: &str = "pay_lot,sell,post_order,cancel_order,fill_order,repay";
+pub const PLAYER_METHODS: &str = "pay_lot,sell,post_order,cancel_order,fill_order,repay,invest";
 const PAY_WINDOW_NS: u64 = 24 * HOUR_NS;
 const HOUR_NS: u64 = 3_600_000_000_000;
 const DEMAND_START_BP: u64 = 10_000;
@@ -32,6 +32,15 @@ const DEMAND_AFTER_SALE_PCT: u64 = 96;
 const DEMAND_RECOVER_BP_PER_HOUR: u64 = 600;
 const BROKE_LINE: u64 = 100;
 const MAX_LOAN: u64 = 5_000;
+/// Backing a broke rival: a player puts in 100-2,000 miles to reopen them and is owed 130%,
+/// paid from half of everything that rival earns at the dealer until the stake is repaid.
+pub const MIN_STAKE: u64 = 100;
+pub const MAX_STAKE: u64 = 2_000;
+pub const STAKE_RETURN_PCT: u64 = 130;
+pub const STAKE_PAYOUT_PCT: u64 = 50;
+/// Gas money: a player who wins a bag gets a little NEAR from the contract, enough to pay for
+/// that bag and sell what is inside. Players never see a gas prompt or run dry.
+pub const GAS_STIPEND: NearToken = NearToken::from_millinear(3);
 
 #[near(serializers = [borsh])]
 #[derive(BorshStorageKey)]
@@ -180,6 +189,35 @@ pub struct FinalCall {
     minted: u64,
     burned: u64,
     escrow: u64,
+}
+
+/// A player's stake in a rival they reopened.
+#[near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct Stake {
+    pub backer: AccountId,
+    pub invested: u64,
+    pub owed: u64,
+    pub paid: u64,
+    pub at_ns: U64,
+}
+
+// Stakes live under their own raw storage key per rival ("stk:<rival>"), so adding them did
+// not change the layout of the contract state.
+fn stakes_key(rival: &AccountId) -> Vec<u8> {
+    [b"stk:".as_slice(), rival.as_bytes()].concat()
+}
+fn read_stakes(rival: &AccountId) -> Vec<Stake> {
+    env::storage_read(&stakes_key(rival))
+        .map(|b| near_sdk::borsh::from_slice(&b).unwrap_or_else(|_| env::panic_str("bad stakes")))
+        .unwrap_or_default()
+}
+fn write_stakes(rival: &AccountId, v: &[Stake]) {
+    if v.is_empty() {
+        env::storage_remove(&stakes_key(rival));
+    } else {
+        env::storage_write(&stakes_key(rival), &near_sdk::borsh::to_vec(v).unwrap());
+    }
 }
 
 // ---------- helpers ----------
@@ -502,6 +540,11 @@ impl FinalCall {
                 lot.status = LotStatus::AwaitingPayment;
                 lot.winner = Some(w.clone());
                 lot.price = price;
+                let is_player = self.profiles.get(w).map(|p| !p.rival).unwrap_or(false);
+                if is_player && env::account_balance() > NearToken::from_near(2) {
+                    Promise::new(w.clone()).transfer(GAS_STIPEND).detach();
+                    emit("gas_stipend", json!({"account_id": w, "yocto": GAS_STIPEND.as_yoctonear().to_string()}));
+                }
             }
             None => {
                 lot.status = LotStatus::Unsold;
@@ -584,12 +627,16 @@ impl FinalCall {
         self.demand.insert(item.clone(), Demand { bp: d, updated_ns: now() });
         let s = self.supply.get(&token_id).copied().unwrap_or(0);
         self.supply.insert(token_id.clone(), s.saturating_sub(amount as u64));
-        {
+        let is_rival = {
             let p = self.profile_mut(&who);
             p.miles += total;
             p.earned += total;
-        }
+            p.rival
+        };
         self.minted += total;
+        if is_rival {
+            self.pay_backers(&who, total);
+        }
 
         emit_mt("mt_burn", json!({"owner_id": who, "token_ids": [token_id], "amounts": [amount.to_string()], "memo": "sold to dealer"}));
         emit("sold", json!({"account_id": who, "token_id": token_id, "amount": amount, "total": total, "demand_bp": d}));
@@ -685,7 +732,71 @@ impl FinalCall {
         amt
     }
 
+    /// Backs a broke rival: the miles go straight to them so they can bid again, and the
+    /// backer is owed 130% from that rival's future dealer sales.
+    pub fn invest(&mut self, rival_id: AccountId, amount: u64) -> u64 {
+        require!((MIN_STAKE..=MAX_STAKE).contains(&amount), "invest 100-2000 miles");
+        let who = env::predecessor_account_id();
+        require!(who != rival_id, "you cannot back yourself");
+        let r = self.profiles.get(&rival_id).cloned().unwrap_or_else(|| env::panic_str("unknown rival"));
+        require!(r.rival, "only rivals take backers");
+        require!(r.miles < BROKE_LINE, "this rival is not broke");
+        {
+            let p = self.profile_mut(&who);
+            require!(!p.rival, "rivals cannot back rivals");
+            require!(p.miles >= amount, "not enough miles");
+            p.miles -= amount;
+            p.spent += amount;
+        }
+        self.profile_mut(&rival_id).miles += amount;
+        let owed = amount * STAKE_RETURN_PCT / 100;
+        let mut v = read_stakes(&rival_id);
+        require!(v.len() < 20, "this rival has enough backers");
+        v.push(Stake { backer: who.clone(), invested: amount, owed, paid: 0, at_ns: U64(now()) });
+        write_stakes(&rival_id, &v);
+        emit("invest", json!({"backer": who, "rival": rival_id, "amount": amount, "owed": owed}));
+        owed
+    }
+
+    /// Half of what a rival earns goes to their backers, oldest stake first.
+    fn pay_backers(&mut self, rival: &AccountId, earned: u64) {
+        let mut v = read_stakes(rival);
+        if v.is_empty() {
+            return;
+        }
+        let mut pool = earned * STAKE_PAYOUT_PCT / 100;
+        let mut paid: Vec<(AccountId, u64)> = Vec::new();
+        for s in v.iter_mut() {
+            if pool == 0 {
+                break;
+            }
+            let pay = (s.owed - s.paid).min(pool);
+            s.paid += pay;
+            pool -= pay;
+            if pay > 0 {
+                paid.push((s.backer.clone(), pay));
+            }
+        }
+        let total: u64 = paid.iter().map(|x| x.1).sum();
+        self.profile_mut(rival).miles -= total;
+        for (b, pay) in &paid {
+            if let Some(p) = self.profiles.get_mut(b) {
+                p.miles += pay;
+                p.earned += pay;
+            }
+            emit("stake_paid", json!({"backer": b, "rival": rival, "amount": pay}));
+        }
+        v.retain(|s| s.paid < s.owed);
+        write_stakes(rival, &v);
+    }
+
     // ---------- Views ----------
+
+    /// Everyone backing this rival and what they are still owed.
+    pub fn stakes(&self, rival_id: AccountId) -> Vec<Stake> {
+        read_stakes(&rival_id)
+    }
+
 
     pub fn get_profile(&self, account_id: AccountId) -> Option<ProfileView> {
         self.profiles.get(&account_id).map(|p| ProfileView {

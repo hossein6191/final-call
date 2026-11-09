@@ -6,6 +6,7 @@ import { state, fmt, esc } from '../state.ts';
 import { AVATARS } from '../avatars.ts';
 import { missions } from './progress.ts';
 import { nextTip } from './bits.ts';
+import { rivalSheet } from '../screens/home.ts';
 
 export const wide = () => matchMedia('(min-width: 1100px) and (min-height: 640px)').matches;
 
@@ -21,6 +22,7 @@ function feedLine(e: any, people: any[]) {
   if (e.kind === 'rival_sold') return `<b>${who(`${e.rival}.${c}`)}</b> sold to the dealer for ${fmt(e.total)}`;
   if (e.kind === 'grounded') return `<b>${who(`${e.rival}.${c}`)}</b> went broke and is grounded`;
   if (e.kind === 'loan') return `The House lent <b>${who(`${e.rival}.${c}`)}</b> ${fmt(e.amount)}`;
+  if (e.kind === 'backed') return `<b>${esc(e.name)}</b> backed <b>${who(`${e.rival}.${c}`)}</b> with ${fmt(e.amount)}`;
   if (e.kind === 'player_loan') return `<b>${who(e.account)}</b> took an emergency loan`;
   if (e.kind === 'order') return `<b>${who(`${e.rival}.${c}`)}</b> wants an item: pays ${fmt(e.price)}`;
   return '';
@@ -68,9 +70,10 @@ export function mountSide(el: HTMLElement | null, kind: 'floor' | 'table'): () =
       .filter((p: any) => p.rival)
       .map((p: any) => {
         const def = state.cfg!.rivals.find((r) => r.account === p.account);
-        return `<div class="sf ${p.grounded ? 'grounded' : ''}">${AVATARS[def?.sub ?? ''] ?? ''}<div class="grow"><b style="color:${def?.color}">${esc(p.name)}</b><small>${esc(def?.title ?? '')}</small></div><div class="sf-m">${p.grounded ? '<span class="trend-down">GROUNDED</span>' : `${fmt(p.miles)}<small>MI</small>`}</div></div>`;
+        return `<button class="sf ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<div class="grow"><b style="color:${def?.color}">${esc(p.name)}</b><small>${esc(def?.title ?? '')}</small></div><div class="sf-m">${p.miles < 100 ? '<span class="back-me">BACK ME</span>' : p.grounded ? '<span class="trend-down">GROUNDED</span>' : `${fmt(p.miles)}<small>MI</small>`}</div></button>`;
       })
       .join('');
+    el.querySelectorAll<HTMLButtonElement>('.sf').forEach((x) => (x.onclick = () => rivalSheet(x.dataset.acc!, b)));
     el.querySelector('#sfeed')!.innerHTML = b.feed
       .slice(0, 10)
       .map((e: any) => {
@@ -80,6 +83,8 @@ export function mountSide(el: HTMLElement | null, kind: 'floor' | 'table'): () =
       .join('');
   };
   if (wide()) void draw();
+  const onFloor = () => wide() && void draw();
+  document.addEventListener('floor', onFloor);
   const t = setInterval(() => wide() && void draw(), 15000);
   const tip = setInterval(() => {
     const x = el.querySelector('#stip');
@@ -89,5 +94,6 @@ export function mountSide(el: HTMLElement | null, kind: 'floor' | 'table'): () =
     alive = false;
     clearInterval(t);
     clearInterval(tip);
+    document.removeEventListener('floor', onFloor);
   };
 }

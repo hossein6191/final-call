@@ -97,6 +97,7 @@ export function call<T = unknown>(methodName: string, args: object): Promise<Sen
 
 export function errorText(e: unknown): string {
   const m = String((e as Error)?.message ?? e);
+  if (/MethodNameMismatch|method_name/i.test(m)) return 'Your account was made before this feature existed. Open the game in a private window to make a new traveller and try it.';
   const hit = /Smart contract panicked: ([^"\n]+)/.exec(m);
   return hit ? hit[1] : m.slice(0, 140);
 }

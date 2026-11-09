@@ -2,12 +2,13 @@
 // today's missions, who's on the floor, and a tip.
 import { api } from '../net.ts';
 import { state, $, fmt, esc, go, toast, accLink, refreshMe, txLink } from '../state.ts';
+import { call, errorText } from '../wallet.ts';
 import { TERMINALS } from '../../../shared/rules.ts';
 import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { AVATARS } from '../avatars.ts';
 import { sound } from '../audio.ts';
 import { passHtml, wirePass, sharePass, livenPass, type PassInfo } from '../ui/pass.ts';
-import { missions, stampCount, stamps, STAMPS, checkUnlocks, worthHistory, recordWorth } from '../ui/progress.ts';
+import { missions, stampCount, stamps, STAMPS, checkUnlocks, worthHistory, recordWorth, track } from '../ui/progress.ts';
 import { worthCardHtml, wireWorth } from '../ui/chart.ts';
 import { ICON, nextTip, hourglassSvg } from '../ui/bits.ts';
 import { coach } from '../ui/coach.ts';
@@ -47,6 +48,7 @@ export function home(root: HTMLElement) {
     <div class="missions" id="missions"></div>
     <div class="section-title row"><span class="grow">PASSPORT STAMPS</span><a href="#album" class="small">see all ›</a></div>
     <div class="stamp-strip" id="stamps"></div>
+    <div id="brokecall"></div>
     <div class="section-title">ON THE FLOOR</div>
     <div class="floor" id="floor"></div>
     <div class="tipcard" id="tip">${hourglassSvg(18)}<span>${esc(nextTip())}</span></div>
@@ -153,10 +155,18 @@ export function home(root: HTMLElement) {
 
   const drawFloor = (b: any) => {
     const rivals = b.people.filter((p: any) => p.rival);
+    const broke = rivals.filter((p: any) => p.miles < 100);
+    const call0 = root.querySelector('#brokecall') as HTMLElement | null;
+    if (call0) {
+      call0.innerHTML = broke.length
+        ? `<button class="broke-call" data-acc="${esc(broke[0].account)}">${AVATARS[state.cfg!.rivals.find((r) => r.account === broke[0].account)?.sub ?? ''] ?? ''}<div class="grow"><b>${esc(broke[0].name)} is broke!</b><small>Back them to reopen their shop and earn 30% from their comeback.</small></div><span>BACK ›</span></button>`
+        : '';
+      call0.querySelector('button')?.addEventListener('click', () => rivalSheet(broke[0].account, b));
+    }
     $('#floor', root).innerHTML = rivals
       .map((p: any) => {
         const def = state.cfg!.rivals.find((r) => r.account === p.account);
-        return `<button class="floor-chip ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<b style="color:${def?.color ?? '#fff'}">${esc(p.name)}</b><small>${p.grounded ? 'grounded' : `${fmt(p.miles ?? p.netWorth)} MI`}</small></button>`;
+        return `<button class="floor-chip ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<b style="color:${def?.color ?? '#fff'}">${esc(p.name)}</b><small>${p.miles < 100 ? '<span class="back-me">BACK ME</span>' : p.grounded ? 'grounded' : `${fmt(p.miles ?? p.netWorth)} MI`}</small></button>`;
       })
       .join('');
     root.querySelectorAll<HTMLButtonElement>('.floor-chip').forEach((el) => (el.onclick = () => { sound.tap(); rivalSheet(el.dataset.acc!, b); }));
@@ -186,6 +196,8 @@ export function home(root: HTMLElement) {
   void load();
   const onMe = () => alive && drawPass();
   document.addEventListener('me', onMe);
+  const onFloor = () => alive && void load();
+  document.addEventListener('floor', onFloor);
   const t = setInterval(() => void load(), 10000);
   const c = setInterval(clock, 15000);
   const tip = setInterval(() => {
@@ -198,6 +210,7 @@ export function home(root: HTMLElement) {
     clearInterval(c);
     clearInterval(tip);
     document.removeEventListener('me', onMe);
+    document.removeEventListener('floor', onFloor);
   };
 }
 
@@ -265,6 +278,7 @@ export function rivalSheet(account: string, board: any) {
         <div><small>NET WORTH</small><b>${p ? fmt(p.netWorth) : '—'}</b></div>
         <div><small>STATUS</small><b class="${p?.grounded ? 'trend-down' : 'trend-up'}">${p?.grounded ? 'GROUNDED' : 'BIDDING'}</b></div>
       </div>
+      ${p && p.miles < 100 ? backPanel(def.name, p) : '<div class="panel small" id="stakeinfo">Backers: …</div>'}
       ${def.loves?.length ? `<div class="panel small"><b>Loves:</b> ${def.loves.map((c) => esc(c)).join(', ')}. Sell them these and they pay over the dealer price.</div>` : ''}
       <div class="panel small">How to read them: <span class="muted">${esc(styleTip(def.style))}</span></div>
       <div class="small muted" style="text-align:center">A real NEAR account with its own key · ${accLink(account)}</div>
@@ -272,6 +286,52 @@ export function rivalSheet(account: string, board: any) {
   document.body.appendChild(el);
   el.addEventListener('click', (e) => e.target === el && el.remove());
   (el.querySelector('#rx') as HTMLButtonElement).onclick = () => el.remove();
+  void api(`/stakes?account=${encodeURIComponent(state.id!.account)}`).then((r) => {
+    const info = el.querySelector('#stakeinfo');
+    const mine = r.mine.filter((x: any) => x.rival === account);
+    if (info) info.innerHTML = `${r.backers[account] ? `<b>${r.backers[account]}</b> player${r.backers[account] > 1 ? 's' : ''} backing ${esc(def.name)}.` : `Nobody is backing ${esc(def.name)} right now.`} ${mine.length ? `You are owed <b>${fmt(mine.reduce((a: number, x: any) => a + x.owed - x.paid, 0))} MI</b> from their sales.` : 'When a rival goes broke, you can back them and earn 30% from their comeback.'}`;
+  }).catch(() => {});
+  let amount = 250;
+  const btn = el.querySelector('#backbtn') as HTMLButtonElement | null;
+  el.querySelectorAll<HTMLButtonElement>('[data-amt]').forEach((b) => (b.onclick = () => {
+    sound.tap();
+    amount = Number(b.dataset.amt);
+    el.querySelectorAll('[data-amt]').forEach((x) => x.classList.toggle('on', x === b));
+    if (btn) btn.textContent = `BACK ${def.name.toUpperCase()} WITH ${fmt(amount)} MI`;
+  }));
+  if (btn) btn.onclick = async () => {
+    if ((state.profile?.miles ?? 0) < amount) return toast('Not enough miles for that stake.');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> SIGNING ON CHAIN…';
+    try {
+      const r = await call<number>('invest', { rival_id: account, amount });
+      await api('/backed', { rival: account, account: state.id!.account, tx: r.hash }).catch(() => {});
+      track('invest');
+      await refreshMe();
+      sound.cash();
+      toast(`You backed <b>${esc(def.name)}</b> with ${fmt(amount)} MI. You are owed <b>${fmt(r.value)}</b> from their sales · ${txLink(r.hash)}`);
+      el.remove();
+      document.dispatchEvent(new CustomEvent('floor'));
+    } catch (e) {
+      sound.error();
+      toast(esc(errorText(e)));
+      btn.disabled = false;
+      btn.textContent = 'TRY AGAIN';
+    }
+  };
+}
+
+/** The offer to reopen a broke rival (the contract's invest method). */
+function backPanel(name: string, p: any) {
+  const left = p.groundedUntil ? Math.max(0, p.groundedUntil - Date.now()) : 0;
+  const when = left > 3600e3 ? `in about ${Math.round(left / 3600e3)} h` : left > 60e3 ? `in ${Math.round(left / 60e3)} min` : 'soon';
+  return `<div class="panel back-panel">
+    <div class="bp-title">💸 ${esc(name)} is broke and closed</div>
+    <p>Back them and they are on the floor again right away. You are owed <b>130%</b> of your stake, paid automatically from half of everything they sell to the Customs Dealer.${left ? ` If nobody backs them, the House bails them out ${when}.` : ''}</p>
+    <div class="bp-amts">${[100, 250, 500, 1000].map((a) => `<button data-amt="${a}" class="${a === 250 ? 'on' : ''}">${fmt(a)}</button>`).join('')}</div>
+    <button class="btn primary" id="backbtn">BACK ${esc(name.toUpperCase())} WITH 250 MI</button>
+    <div class="small muted">You have ${fmt(state.profile?.miles ?? 0)} MI. Repayment is done by the contract on NEAR, not by us.</div>
+  </div>`;
 }
 
 function styleTip(style: string) {

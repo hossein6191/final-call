@@ -249,3 +249,70 @@ fn preimage_format_is_stable() {
     let pre = commitment_preimage("finalcall.testnet", 3, 1, &["vinyl@worn:p".to_string(), "rubber-duck@good:v".to_string()], "abcd");
     assert_eq!(pre, "final-call/v1|finalcall.testnet|lot=3|tier=1|items=vinyl@worn:p,rubber-duck@good:v|salt=abcd");
 }
+
+fn with_rival() -> FinalCall {
+    let mut c = setup();
+    let pk: PublicKey = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp".parse().unwrap();
+    ctx(HOUSE, 1_500);
+    let _ = c.create_account("kip".into(), pk, "Kip".into(), true, Some(50));
+    c
+}
+const KIP: &str = "kip.finalcall.testnet";
+
+#[test]
+fn backing_a_broke_rival_pays_back_from_sales() {
+    let mut c = with_rival();
+    ctx(ALICE, 2_000);
+    assert_eq!(c.invest(acc(KIP), 200), 260);
+    assert_eq!(c.get_profile(acc(ALICE)).unwrap().profile.miles, 800);
+    assert_eq!(c.get_profile(acc(KIP)).unwrap().profile.miles, 250);
+    assert_eq!(c.stakes(acc(KIP)).len(), 1);
+
+    // Kip wins a bag and sells the camera: half of the proceeds go to Alice.
+    seal(&mut c, 1);
+    ctx(HOUSE, 3_000);
+    c.close_lot(1, Some(acc(KIP)), 100, bag(), SALT.into());
+    ctx(KIP, 4_000);
+    c.pay_lot(1);
+    let got = c.sell("film-camera@mint".into(), 1); // 110 * 1.5 = 165
+    assert_eq!(got, 165);
+    let alice = c.get_profile(acc(ALICE)).unwrap().profile.miles;
+    assert_eq!(alice, 800 + 82);
+    assert_eq!(c.get_profile(acc(KIP)).unwrap().profile.miles, 250 - 100 + 165 - 82);
+    assert_eq!(c.stakes(acc(KIP))[0].paid, 82);
+}
+
+#[test]
+fn stake_closes_when_repaid() {
+    let mut c = with_rival();
+    ctx(ALICE, 2_000);
+    c.invest(acc(KIP), 100); // owed 130
+    for id in 1..=3 {
+        seal(&mut c, id);
+        ctx(HOUSE, 3_000 + id);
+        c.close_lot(id, Some(acc(KIP)), 100, bag(), SALT.into());
+        ctx(KIP, 4_000 + id);
+        c.pay_lot(id);
+        c.sell("film-camera@mint".into(), 1);
+    }
+    assert!(c.stakes(acc(KIP)).is_empty());
+    assert_eq!(c.get_profile(acc(ALICE)).unwrap().profile.miles, 900 + 130);
+}
+
+#[test]
+#[should_panic(expected = "this rival is not broke")]
+fn only_broke_rivals_take_backers() {
+    let mut c = with_rival();
+    ctx(ALICE, 2_000);
+    c.invest(acc(KIP), 200);
+    ctx(BOB, 2_100);
+    c.invest(acc(KIP), 200);
+}
+
+#[test]
+#[should_panic(expected = "only rivals take backers")]
+fn players_cannot_be_backed() {
+    let mut c = with_rival();
+    ctx(ALICE, 2_000);
+    c.invest(acc(BOB), 200);
+}

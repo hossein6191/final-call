@@ -17,14 +17,15 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
 - **Sealed bags.** Every bag's contents are hashed and committed on chain before it reaches the board. When the hammer falls the contract only accepts a reveal that matches the hash. Your browser re-checks it too.
 - **Rivals with real wallets.** Six AI bidders each own a NEAR account with an on-chain balance. They pay for what they win with their own key, sell, post escrowed buy orders, borrow from the House when broke, and can lose everything.
 - **A shared market.** The Customs Dealer's prices live in the contract: each sale lowers that item's price for everyone, and it recovers over time.
-- **No wallet.** You pick a nickname. Your browser makes a key, the contract creates your account holding only a key that can call the six player methods, and every game transaction is signed in the background.
+- **Back a broke rival.** A rival who runs out of miles closes up shop. Any player can reopen them with a stake of 100–2,000 miles; the contract then pays the backer 130% back, automatically, from half of everything that rival sells to the dealer. If nobody steps in for three hours, the House bails them out.
+- **No wallet, no gas.** You pick a nickname. Your browser makes a key, the contract creates your account holding only a key that can call the seven player methods, and every game transaction is signed in the background. Each bag you win comes with a little NEAR from the contract to pay for its own transactions, so you never see a gas prompt or run dry.
 
 ## Try it (do X → see Y)
 
-1. Open https://final-call-production-5913.up.railway.app on a phone (or a narrow browser window) and type a nickname, then tap **CHECK IN**.
-   → In about 5 seconds you see your new account (`<name>-xxxx.finalcall.testnet`) with a transaction link, and the Arrivals board opens. No wallet prompt appears.
-2. Tap **BID** on the row marked **★ Your welcome bag**.
-   → The bag rolls onto the belt, the X-ray switches on, and a scanner beam sweeps it. Drag across the bag and tap silhouettes to appraise them.
+1. Open https://final-call-production-5913.up.railway.app on a phone or a computer (Chrome gets a full desktop layout), type a nickname, then tap **CHECK IN**.
+   → In about 5 seconds your account (`<name>-xxxx.finalcall.testnet`) is created and the lobby opens: your boarding pass, today's missions, and the rivals on the floor. No wallet prompt appears.
+2. Tap **PLAY** on **Your welcome bag**, read the round briefing, and press **START** (or Space).
+   → The bag rolls onto the belt and the X-ray switches on. A coach walks you through the first bag step by step: drag across the bag, tap silhouettes to appraise them.
 3. When the belt stops, tap the big **BID** button a few times.
    → Rivals answer with numbered paddles and speech lines; the ring around BID counts down; "GOING ONCE", "GOING TWICE" and a gavel follow when nobody bids.
 4. Win the bag.
@@ -35,9 +36,11 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
    → Players and rivals ranked by net worth read live from the contract, plus a feed of wins, rival sales, buy orders, loans and bankruptcies with transaction links.
 7. On the Board, tap **SIMULATE A WEEK**.
    → In under a second your browser runs 7 days of auctions (about 1,000 lots) between the six rivals and four bot players with the live rules, and draws everyone's net worth over the week: who went broke, the best flip, and how far dealer demand fell for popular items.
-8. Open `#lot/<id>` for any lot (link in the Proof panel).
+8. On the lobby, tap a rival. If one is broke it shows **BACK ME**: pick a stake and tap **BACK**.
+   → One transaction signed by your key moves the miles to the rival on chain (`invest`); they are back in the auctions at once, and **My Bags → Your stakes** shows what the contract still owes you. `node scripts/e2e-invest.ts` runs the same flow on testnet with throwaway accounts, including a repayment and the gas stipend.
+9. Open `#lot/<id>` for any lot (link in the Proof panel).
    → The full tag check: the on-chain commitment, the revealed preimage, your browser's hash, the rivals' limits (computed from the X-ray only), and the NEAR AI signature on the rivals' lines.
-9. From a terminal, with no secrets: `npm run verify` (or `npm run verify -- <lot id>`).
+10. From a terminal, with no secrets: `npm run verify` (or `npm run verify -- <lot id>`).
    → Reads the lot straight from the contract over public RPC, rebuilds the preimage, hashes it, and prints `match: YES` plus the contract's own `check_commitment` result.
 
 No setup is needed for any of this; the hosted game runs on NEAR testnet.
@@ -51,6 +54,8 @@ No setup is needed for any of this; the hosted game runs on NEAR testnet.
 | Miles balances, dealer market with demand that falls per sale and recovers per hour | `contract/src/lib.rs` `sell`, `dealer_quote`, `market` |
 | Escrowed buy orders between any accounts (rivals use them as collectors) | `post_order`, `fill_order`, `cancel_order` |
 | Wallet-free accounts: the contract creates `<sub>.finalcall.testnet` with one function-call key limited to the player methods | `create_account`, `PLAYER_METHODS` |
+| Backing broke rivals: stakes are stored per rival, and repayments come out of the rival's dealer sales inside `sell` | `invest`, `stakes`, `pay_backers` |
+| Gas stipend: closing a lot won by a player sends that player a little NEAR from the contract | `close_lot`, `GAS_STIPEND` |
 | The server holds no full-access key: three House function-call keys limited to House methods; one scoped key per rival | `scripts/setup-testnet.ts`, `server/chain.ts` |
 | Players sign their own transactions in the browser (payments, sales, order fills) | `web/src/wallet.ts`, `shared/near-send.ts` |
 | Rival lines from NEAR AI Cloud (TEE model); the server checks the response signature and links NEAR AI's verifier | `server/ai.ts` |
@@ -58,7 +63,7 @@ No setup is needed for any of this; the hosted game runs on NEAR testnet.
 ## What makes an auction feel like an auction
 
 - The bag rolls onto the belt with a story tag (route, weight, days unclaimed, sticker), then the X-ray switches on. Geiger-style clicks speed up over valuable items; holding the beam on one appraises it.
-- Rivals raise numbered paddles, twitch just before they bid, hesitate visibly near their limit, and fold with a line. A rival you keep beating remembers you and bids harder.
+- Rivals raise numbered paddles, twitch just before they bid, hesitate visibly near their limit, and fold with a line. Their faces react: smug when they lead, angry when you outbid them, sweating when they hesitate, shocked by a jump bid. Each personality has its own lines for 15 moments of an auction, with your name and the price in them, and never repeats a line until it has used the rest. A rival you keep beating remembers you and bids harder.
 - "Going once" and "going twice" bring a heartbeat that speeds from 90 to 140 BPM, faster ticks and a red vignette; a bid inside "going twice" is called out as a snipe, a long back-and-forth as a bidding war, and the last two bidders go head to head.
 - The hammer: hitstop, camera punch, gavel slam, SOLD stamp. Then the case opens, items arrive cheapest first, and the last sealed pouch gets a drumroll and slow motion. Lose to a rival and you see whether you missed a jackpot or dodged a bullet.
 - Collectors who lose a bag to you post an escrowed on-chain buy order for the piece they wanted.
