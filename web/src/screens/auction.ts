@@ -6,6 +6,9 @@ import { drawIcon, XRAY } from '../icons.ts';
 import { AVATARS } from '../avatars.ts';
 import { sound, scanHum, buzz, crowdBed, crowdSwell, tension, musicMode } from '../audio.ts';
 import { showSold } from './unzip.ts';
+import { coach, coachOff, coachActive } from '../ui/coach.ts';
+import { track, seen } from '../ui/progress.ts';
+import { nextTip, hourglassSvg } from '../ui/bits.ts';
 
 interface Slot {
   m: ManifestSlot;
@@ -35,6 +38,7 @@ export function auction(root: HTMLElement, lotId: number) {
       <canvas id="xray"></canvas>
       <div class="scanbar"><i id="scanfill" style="width:0%"></i></div>
       <div class="hint" id="hint">WAITING FOR THE BELT…</div>
+      <div class="boarding" id="boarding">${hourglassSvg(30)}<b>NEXT BAG ON BELT</b><span>${esc(nextTip())}</span></div>
       <div class="chip tagchip" id="tagchip" hidden></div>
     </div>
     <div class="appraise" id="appraise"></div>
@@ -92,6 +96,13 @@ export function auction(root: HTMLElement, lotId: number) {
   let tier = 0;
   let startMsg: any = null;
   const rivalCards = new Map<string, HTMLElement>();
+  // tutorial + mission bookkeeping
+  let closeScanCoach: (() => void) | null = null;
+  let tappedOnce = false;
+  let myLastSnipe = false;
+  let myLastWar = 0;
+  let duel = false;
+  const coverage = () => covered.filter(Boolean).length / Math.max(1, covered.length);
   const off = document.createElement('canvas');
 
   // ---------- drawing ----------
@@ -226,6 +237,13 @@ export function auction(root: HTMLElement, lotId: number) {
       const b = Math.ceil(((beamX + bw / 2) / W) * covered.length);
       for (let i = Math.max(0, a); i < Math.min(covered.length, b); i++) covered[i] = true;
       for (const s of slots) if (Math.abs(s.x - beamX) < bw / 2) s.revealed = true;
+      if (closeScanCoach && (coverage() > 0.75 || (dragging && t - scanStart > 900))) {
+        closeScanCoach();
+        closeScanCoach = null;
+        if (!tappedOnce && !seen('a-tap')) {
+          coach({ step: 'a-tap', target: belt, hand: 'tap', title: 'Appraise it', text: 'Tap an item, or hold the beam on it, to see what it is worth. Everything you tag adds up in the chip below.' });
+        }
+      }
       // Geiger clicks: faster over valuable visible items (their value is public), weight for pouches.
       const under = slots.find((s) => Math.abs(s.x - beamX) < s.size * 0.35);
       if (under) {
@@ -428,6 +446,13 @@ export function auction(root: HTMLElement, lotId: number) {
   }
 
   function tagSlot(best: Slot, locked: boolean) {
+    if (!best.tagged) track('appraise');
+    if (!tappedOnce) {
+      tappedOnce = true;
+      if (coachActive('a-tap') || coachActive('a-scan')) coachOff();
+      if (manifest.some((x) => x.pouch))
+        setTimeout(() => coach({ step: 'a-pouch', target: $('#appraise', root), title: 'Sealed pouches', text: 'Dark blobs are sealed pouches: nobody sees inside until the bag is won. <b>Heavy</b> or <b>✦ glinting</b> pouches can hide something big.', ms: 4200 }), 500);
+    }
     locked ? tension.lock() : sound.tap();
     if (locked) buzz(8);
     best.tagged = true;
@@ -571,6 +596,7 @@ export function auction(root: HTMLElement, lotId: number) {
         chip.innerHTML = `🔒 tag ${short(m.commitment, 6)}`;
         chip.onclick = () => window.open(`#lot/${lotId}`, '_blank');
         drawRivals(m.rivals);
+        $('#boarding', root)?.remove();
         layout();
         appraise();
         arriveMs = m.arriveMs ?? 1200;
@@ -579,6 +605,7 @@ export function auction(root: HTMLElement, lotId: number) {
         tension.whoosh();
         sound.chime();
         $('#hint', root).textContent = `NOW ARRIVING · BELT ${m.flight.carousel}`;
+        if (m.tutorial) coach({ step: 'a-arrive', target: belt, title: 'A lost bag rolls in', text: `Nobody came back for it. When the X-ray switches on you get a few seconds to look inside before bidding opens against ${m.rivals.length} AI rivals.`, ms: arriveMs + 400 });
         setTimeout(() => {
           if (phase !== 'arrive') return;
           tension.clunk();
@@ -590,6 +617,7 @@ export function auction(root: HTMLElement, lotId: number) {
           beamX = W * 0.05;
           $('#hint', root).textContent = 'DRAG TO SCAN · TAP ITEMS TO APPRAISE';
           scanHum(true);
+          closeScanCoach = coach({ step: 'a-scan', target: belt, hand: 'drag', title: 'X-ray it', text: 'Drag your finger left and right across the bag. Shapes are items: <span style="color:#4aa8ff">blue</span> metal, <span style="color:#ff9a3c">orange</span> organic, <span style="color:#5bd67a">green</span> plastic, <span style="color:#8f7bff">purple</span> dense.' });
         }, arriveMs);
         crowdBed(true);
         $('#amt', root).textContent = fmt(m.opening);
@@ -610,6 +638,8 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#jumpv', root).textContent = '+3 steps';
         controls(true);
         musicMode('auction');
+        if (coverage() > 0.9) track('fullscan');
+        coach({ step: 'a-bid', target: $('.bidwrap', root), hand: 'tap', title: 'Bidding is open', text: 'Tap <b>BID</b> to raise the price. Every bid restarts a 5-second clock: going once, going twice, <b>SOLD</b>. Whoever leads when it runs out wins the bag.' });
         break;
       case 'auction:bid': {
         price = m.price;
@@ -624,6 +654,16 @@ export function auction(root: HTMLElement, lotId: number) {
         $('#who', root).innerHTML = m.by === me ? '<b>You</b> lead' : `<b>${esc(m.name)}</b> leads${m.heat ? ' · <span class="heat">HEAT: DOUBLE STEPS</span>' : ''}`;
         $('#bidv', root).textContent = fmt(next);
         sound.bid(price, m.by === me);
+        if (m.by === me) {
+          track('bid');
+          if (m.jump) track('jump');
+          if (m.outbid === `bigsal.${state.cfg!.contract}`) track('beatSal');
+          myLastSnipe = Boolean(m.snipe);
+          myLastWar = m.war ?? 0;
+          if (coachActive('a-bid')) coachOff();
+        } else if (m.outbid === me) {
+          coach({ step: 'a-outbid', target: rivalCards.get(m.by) ?? null, title: `${m.name} outbid you`, text: 'Bid again to take the lead, or <b>FOLD</b> if the price is past what the bag looks worth.', ms: 3600 });
+        }
         crowdSwell(Math.min(1, (m.war ?? 0) / 4));
         if (m.by !== me) buzz(15);
         say(m.by, m.line);
@@ -649,11 +689,16 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'auction:think': {
         const card = rivalCards.get(m.by);
         card?.classList.add('thinking');
+        coach({ step: 'a-think', target: card ?? null, title: 'They are thinking', text: 'Those dots mean a rival hesitates. They are close to their limit, so one more bid may win it.', ms: 3200 });
         setTimeout(() => card?.classList.remove('thinking'), 1400);
         break;
       }
       case 'auction:call':
         showCallout(m.stage);
+        if (m.stage === 'once')
+          leader === me
+            ? coach({ step: 'a-once-lead', target: $('.price', root), title: 'Going once…', text: 'You lead. If nobody bids before the clock runs out, the bag is yours. No need to tap.', ms: 3000 })
+            : coach({ step: 'a-once', target: $('.bidwrap', root), title: 'Going once!', text: 'Bid now or the leader takes the bag.', ms: 2600 });
         m.stage === 'once' ? sound.once() : sound.twice();
         buzz(m.stage === 'once' ? 30 : [30, 60, 30]);
         break;
@@ -667,6 +712,7 @@ export function auction(root: HTMLElement, lotId: number) {
           const [a, b] = [...active];
           const name = (acc: string) => (acc === me ? 'YOU' : (rivalCards.get(acc)?.querySelector('.nm')?.textContent ?? '').toUpperCase());
           $('#auctionRoot', root).classList.add('duel');
+          duel = active.has(me);
           banner(`HEAD TO HEAD: ${name(a)} vs ${name(b)}`, 'war');
           crowdSwell(1);
         }
@@ -683,6 +729,13 @@ export function auction(root: HTMLElement, lotId: number) {
         break;
       case 'auction:sold':
         phase = 'sold';
+        coachOff();
+        if (m.winner === me) {
+          track('win');
+          if (myLastSnipe) track('snipe');
+          if (myLastWar >= 4) track('war');
+          if (duel) track('duel');
+        }
         controls(false);
         scanHum(false);
         crowdBed(false);
@@ -715,7 +768,7 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'error':
         sound.error();
         toast(esc(m.message));
-        if (phase === 'wait') setTimeout(() => go('#arrivals'), 1200);
+        if (phase === 'wait') setTimeout(() => go('#home'), 1200);
         break;
       case 'socket:closed':
         if (phase === 'live' || phase === 'scan') toast('Connection lost. The hammer still falls; check My Bags.');

@@ -61,6 +61,8 @@ export class Auction {
   voiced: Voiced;
   private timer: NodeJS.Timeout | null = null;
   private playerMiles: number;
+  private tutorial = false;
+  private playerHasBid = false;
   private send: Send;
   private onDone: (r: AuctionResult) => void;
 
@@ -79,10 +81,11 @@ export class Auction {
     this.player = { id: player.account, name: player.nickname, max: 0, estimate: 0, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: 0 };
     this.seats = [this.player];
     const tutorial = Boolean(bag.reserved_for);
+    this.tutorial = tutorial;
     for (const r of tutorial ? lineup.slice(0, 2) : lineup) {
       const plan = planFor(r, this.manifest, bag.tier);
       // The first bag teaches the payoff: two rivals who give up around half its value.
-      if (tutorial) plan.max = Math.min(plan.max, Math.floor((publicEstimate(this.manifest, bag.tier) * 0.45) / 10) * 10);
+      if (tutorial) plan.max = Math.min(plan.max, Math.floor((publicEstimate(this.manifest, bag.tier) * 0.3) / 10) * 10);
       // Grudges: a rival you keep beating pushes 10% harder against you.
       const mem = rivalryOf(player.account, r.account);
       if (!tutorial && mem.player_wins >= 2) plan.max = Math.floor((plan.max * 1.1) / 10) * 10;
@@ -129,13 +132,14 @@ export class Auction {
       sealedTx: this.bag.sealed_tx,
       manifest: this.manifest,
       opening: this.bag.opening,
-      scanMs: SCAN_MS,
+      scanMs: this.scanMs(),
       arriveMs: ARRIVE_MS,
       appraisal: publicEstimate(this.manifest, this.bag.tier),
       rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, sub: s.rival!.def.sub, color: s.rival!.def.color, title: s.rival!.def.title, miles: s.rival!.miles, grudge: s.grudge })),
       you: { miles: this.playerMiles },
+      tutorial: Boolean(this.bag.reserved_for),
     });
-    setTimeout(() => this.goLive(), SCAN_MS);
+    setTimeout(() => this.goLive(), this.scanMs());
   }
 
   private goLive() {
@@ -166,6 +170,7 @@ export class Auction {
   }
 
   private accept(s: Seat, amount: number, jump: boolean) {
+    if (s === this.player) this.playerHasBid = true;
     const prevLeader = this.leader;
     const snipe = this.calls >= 2; // landed after "going twice"
     this.war = prevLeader && this.prev === s && prevLeader !== s ? this.war + 1 : prevLeader ? 1 : 0;
@@ -184,6 +189,11 @@ export class Auction {
     this.send({ type: 'auction:bid', by: s.id, name: s.name, price: amount, jump, line, next: this.nextPrice(), heat: this.heat(), snipe, war: this.war, outbid: prevLeader?.id ?? null });
     // A bluffer caught by a jump often folds.
     if (jump && prevLeader?.rival?.def.style === 'bluffer' && Math.random() < 0.6) this.fold(prevLeader);
+  }
+
+  /** A first bag gets twice the scan time: the coach is teaching dragging and tapping. */
+  private scanMs() {
+    return this.tutorial ? ARRIVE_MS + 12000 : SCAN_MS;
   }
 
   playerBid(kind: 'bid' | 'jump') {
@@ -255,6 +265,9 @@ export class Auction {
       this.calls = 2;
       this.send({ type: 'auction:call', stage: 'twice' });
     }
+
+    // On a player's first bag the rivals give them a moment to place the first bid.
+    if (this.tutorial && !this.playerHasBid && elapsed < 4000) return;
 
     for (const s of this.rivals) {
       if (s.folded || s === this.leader) continue;

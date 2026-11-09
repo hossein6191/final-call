@@ -4,6 +4,11 @@ import { state, $, fmt, esc, txLink, accLink, refreshMe, toast } from '../state.
 import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { sound } from '../audio.ts';
 import { iconSvg } from '../icons.ts';
+import { LADDER } from '../../../shared/catalog.ts';
+import { COND_BP, DEMAND } from '../../../shared/rules.ts';
+import { coach } from '../ui/coach.ts';
+import { track } from '../ui/progress.ts';
+import { ICON } from '../ui/bits.ts';
 
 const RANK: Record<string, number> = { worn: 0, good: 1, mint: 2 };
 
@@ -52,6 +57,7 @@ export function bags(root: HTMLElement) {
   </div>`;
 
   let alive = true;
+  let demandNow = new Map<string, number>();
   const busy = new Set<string>();
 
   const render = async () => {
@@ -59,6 +65,7 @@ export function bags(root: HTMLElement) {
     if (!alive) return;
     const p = state.profile;
     const demand = new Map<string, number>(mk.market.map((r: any) => [r.item_id, r.demand_bp]));
+    demandNow = demand;
     const orders = (mk.orders as any[]).filter((o) => o.buyer !== state.id!.account);
     $('#acct', root).innerHTML = `Account ${accLink(state.id!.account)} · items are NEP-245 tokens on <span class="mono">${state.cfg!.contract}</span>`;
 
@@ -102,7 +109,7 @@ export function bags(root: HTMLElement) {
           ${iconSvg(id)}
           <div>
             <div class="nm">${esc(def.name)}${n > 1 ? ` <span class="muted">×${n}</span>` : ''}</div>
-            <div class="sub">${cond} · dealer <b>${fmt(price)}</b> <span class="${d < 10000 ? 'trend-down' : ''}">${d < 10000 ? `▼ demand ${(d / 100).toFixed(0)}%` : 'full demand'}</span></div>
+            <div class="sub">${cond} · dealer <b>${fmt(price)}</b> <span class="${d < 10000 ? 'trend-down' : ''}">${d < 10000 ? `▼ demand ${(d / 100).toFixed(0)}%` : 'full demand'}</span> <button class="why" data-why="${token}" aria-label="Why this price">${ICON.info}</button></div>
             ${best ? `<div class="sub order-badge">${esc(rival?.name ?? best.buyer)} wants it: ${fmt(best.price_each)} (+${Math.round((best.price_each / Math.max(1, price) - 1) * 100)}%)</div>` : ''}
           </div>
           <div class="acts">
@@ -113,6 +120,7 @@ export function bags(root: HTMLElement) {
       })
       .join('');
 
+    coach({ step: 'b-sell', target: root.querySelector('[data-sell]'), hand: 'tap', title: 'Sell for miles', text: 'The Customs Dealer buys anything, instantly. Tap ⓘ to see how the price is set. Purple offers are rival collectors paying more.' });
     root.querySelectorAll<HTMLButtonElement>('[data-sell]').forEach((b) => {
       b.onclick = async () => {
         const token = b.dataset.sell!;
@@ -124,6 +132,7 @@ export function bags(root: HTMLElement) {
           const r = await call<number>('sell', { token_id: token, amount: 1 });
           coinFlight(b, r.value);
           sound.cash();
+          track('sell');
           toast(`Sold for <b>${fmt(r.value)}</b> MI · ${txLink(r.hash)}`);
         } catch (e) {
           sound.error();
@@ -141,6 +150,7 @@ export function bags(root: HTMLElement) {
           const r = await call<number>('fill_order', { order_id: Number(b.dataset.fill), token_id: b.dataset.token, amount: 1 });
           coinFlight(b, r.value);
           sound.cash();
+          track('fill');
           toast(`A rival paid you <b>${fmt(r.value)}</b> MI from escrow · ${txLink(r.hash)}`);
         } catch (e) {
           sound.error();
@@ -151,8 +161,41 @@ export function bags(root: HTMLElement) {
     });
   };
 
+  root.addEventListener('click', (e) => {
+    const w = (e.target as HTMLElement).closest('[data-why]') as HTMLElement | null;
+    if (w) whyPrice(w.dataset.why!, demandNow.get(w.dataset.why!.split('@')[0]) ?? 10000, state.prices[w.dataset.why!] ?? 0);
+  });
   void render();
   return () => {
     alive = false;
   };
+}
+
+/** "Why this price?": the dealer's pricing rule, worked through for this item. */
+function whyPrice(token: string, demandBp: number, price: number) {
+  const [id, cond] = token.split('@');
+  const def = ITEM_BY_ID[id];
+  const base = LADDER[def.level];
+  const condPct = COND_BP[cond as keyof typeof COND_BP] / 100;
+  const el = document.createElement('div');
+  el.className = 'overlay';
+  el.innerHTML = `
+    <div class="sheet">
+      <div class="row"><div class="h1 grow">Why ${fmt(price)} MI?</div><button class="icon-btn" id="wx" aria-label="Close">✕</button></div>
+      <div class="panel why-math">
+        <div><span>Base value · ${esc(def.name)}</span><b>${fmt(base)}</b></div>
+        <div><span>× Condition · ${esc(cond)}</span><b>${condPct}%</b></div>
+        <div><span>× Demand right now</span><b class="${demandBp < 10000 ? 'trend-down' : ''}">${(demandBp / 100).toFixed(0)}%</b></div>
+        <div class="tot"><span>Dealer pays</span><b>${fmt(price)} MI</b></div>
+      </div>
+      <div class="panel small" style="line-height:1.5">
+        The Customs Dealer is a contract on NEAR, not a person. Every sale of an item lowers its demand by
+        <b>${Math.round((1 - DEMAND.perSaleFactor) * 100)}%</b> for everyone, down to a floor of <b>${DEMAND.floorBp / 100}%</b>.
+        Demand climbs back <b>${DEMAND.recoverBpPerHour / 100}%</b> an hour. Flood the market and prices fall; wait and they recover.
+        <br><span class="muted">The rule lives in one file: shared/rules.ts (DEMAND), and the contract applies it on chain.</span>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', (e) => e.target === el && el.remove());
+  (el.querySelector('#wx') as HTMLButtonElement).onclick = () => el.remove();
 }

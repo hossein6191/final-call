@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { PublicKey } from 'near-api-js';
 import { cfg } from './config.ts';
-import { db, getBag, setBag, recentFeed, type BagRow } from './db.ts';
+import { db, getBag, setBag, recentFeed, addFeed, type BagRow } from './db.ts';
 import { house, panicMessage, provider, txUrl, view } from './chain.ts';
 import { arrivals, claimBag, fillPool, sealTutorialBag, toPublic } from './bags.ts';
 import { Auction } from './auction.ts';
@@ -173,6 +173,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+const loanInFlight = new Set<string>();
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
   const p = url.pathname;
@@ -199,6 +200,35 @@ const server = createServer(async (req, res) => {
       const demand = new Map(rows.map((m: any) => [m.item_id, m.demand_bp]));
       const prices = profile ? Object.fromEntries((profile as any).inventory.map(([t]: [string]) => [t, dealerValue(t, demand)])) : {};
       return json(res, 200, { profile, pending, prices });
+    }
+    if (p === '/api/loan' && req.method === 'POST') {
+      // An emergency loan for a broke player, paid by the House and repaid from later sales.
+      const body = await readBody(req);
+      const account = String(body.account ?? '');
+      const known = db.prepare('SELECT 1 FROM players WHERE account_id = ?').get(account);
+      const prof: any = known ? await view('get_profile', { account_id: account }) : null;
+      if (!prof) return json(res, 404, { error: 'no such player' });
+      if (prof.miles >= 100) return json(res, 400, { error: 'You still have miles. Loans are for travellers who are out.' });
+      if (prof.debt >= 1500) return json(res, 400, { error: 'Credit limit reached. Sell items or repay first.' });
+      if (loanInFlight.has(account)) return json(res, 429, { error: 'Your loan is on its way.' });
+      loanInFlight.add(account);
+      try {
+        const tx = await house('grant_loan', { account_id: account, amount: 300 });
+        addFeed('player_loan', { account, amount: 300 });
+        return json(res, 200, { amount: 300, tx: tx.hash, url: txUrl(tx.hash) });
+      } catch (e) {
+        return json(res, 400, { error: panicMessage(e) });
+      } finally {
+        loanInFlight.delete(account);
+      }
+    }
+    if (p === '/api/found') {
+      // Every item the player has ever won (from closed lots, whose contents are public on chain).
+      const account = url.searchParams.get('account') ?? '';
+      const rows = db.prepare("SELECT items FROM bags WHERE winner = ? AND status IN ('awaiting_payment', 'paid')").all(account) as { items: string }[];
+      const found: Record<string, number> = {};
+      for (const r of rows) for (const tok of JSON.parse(r.items) as string[]) found[tok.split('@')[0]] = (found[tok.split('@')[0]] ?? 0) + 1;
+      return json(res, 200, { found, bags: rows.length });
     }
     const lotMatch = /^\/api\/lot\/(\d+)$/.exec(p);
     if (lotMatch) {

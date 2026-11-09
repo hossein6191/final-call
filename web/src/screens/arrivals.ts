@@ -1,6 +1,7 @@
 import { api } from '../net.ts';
 import { state, $, fmt, go, short } from '../state.ts';
 import { TERMINALS } from '../../../shared/rules.ts';
+import { LADDER } from '../../../shared/catalog.ts';
 import { sound } from '../audio.ts';
 
 let tab = 0;
@@ -11,7 +12,7 @@ export function arrivals(root: HTMLElement) {
     <div class="ticker" id="ticker"><div class="track" id="track">Loading the floor…</div></div>
     <div class="h1">Arrivals</div>
     <div class="small muted">Bags nobody came back for. Each one's contents were sealed on NEAR before it hit the board.</div>
-    <div class="tabs" id="tabs"></div>
+    <div class="terms" id="tabs"></div>
     <div class="board">
       <div class="board-head"><span>FLIGHT</span><span>FROM</span><span style="text-align:right">OPENS</span><span></span></div>
       <div id="rows"><div class="locked"><span class="spinner"></span></div></div>
@@ -21,9 +22,16 @@ export function arrivals(root: HTMLElement) {
   const draw = (bags: any[]) => {
     $('#tabs', root).innerHTML = TERMINALS.map((t) => {
       const locked = state.netWorth < t.unlockNetWorth;
-      return `<button data-t="${t.id}" class="${t.id === tab ? 'on' : ''}">${t.short}${locked ? ' 🔒' : ''}<small>${t.name}</small></button>`;
+      const n = bags.filter((b) => b.tier === t.id).length;
+      return `<button data-t="${t.id}" class="term t${t.id} ${t.id === tab ? 'on' : ''} ${locked ? 'locked' : ''}">
+        <svg class="term-bg" viewBox="0 0 120 120" aria-hidden="true"><circle class="s1" cx="96" cy="24" r="30"/><rect class="s2" x="-10" y="70" width="70" height="70" rx="12"/></svg>
+        <span class="term-k">${t.short}${locked ? ' 🔒' : ''}</span>
+        <b>${['Domestic', 'International', 'Lounge'][t.id]}</b>
+        <small>${locked ? `opens at ${fmt(t.unlockNetWorth)}` : `${n} bag${n === 1 ? '' : 's'} · finds up to ${fmt(LADDER[t.ladderStart + 4])}`}</small>
+        ${locked ? `<i class="term-bar"><i style="width:${Math.min(100, (state.netWorth / t.unlockNetWorth) * 100)}%"></i></i>` : ''}
+      </button>`;
     }).join('');
-    root.querySelectorAll<HTMLButtonElement>('#tabs button').forEach((b) => (b.onclick = () => { sound.tap(); tab = Number(b.dataset.t); draw(bags); }));
+    root.querySelectorAll<HTMLButtonElement>('#tabs .term').forEach((b) => (b.onclick = () => { sound.tap(); tab = Number(b.dataset.t); draw(bags); }));
 
     const t = TERMINALS[tab];
     const rows = $('#rows', root);
@@ -69,6 +77,7 @@ export function arrivals(root: HTMLElement) {
       if (e.kind === 'rival_sold') lines.push(`${who(`${e.rival}.${c}`)} dumps a bag on the dealer for ${fmt(e.total)}`);
       if (e.kind === 'grounded') lines.push(`BREAKING: ${who(`${e.rival}.${c}`)} is broke and grounded`);
       if (e.kind === 'loan') lines.push(`The House bails out ${who(`${e.rival}.${c}`)} with ${fmt(e.amount)} MI`);
+      if (e.kind === 'player_loan') lines.push(`${who(e.account)} takes an emergency loan from the House`);
       if (e.kind === 'order') lines.push(`${who(`${e.rival}.${c}`)} is hunting: pays ${fmt(e.price)} for the right item`);
     }
     const top = b.people[0];

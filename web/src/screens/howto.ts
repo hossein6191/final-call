@@ -30,6 +30,7 @@ export function showHowto(onClose?: () => void) {
         <div class="hstep"><div class="art">${iconSvg('gold-bar', { size: 54 })}</div><div><b>4 · Unzip and sell</b><p>Open the bag and crack the pouches. Sell to the Customs Dealer, or to a rival collector who wants that piece. Every sale lowers that item's price for everyone.</p></div></div>
       </div>
       <div class="panel small">No wallet needed: your browser holds the only key to your account, and every payment is signed by you in the background. Runs on NEAR testnet; miles are play money.</div>
+      <div class="panel small">First time? A coach walks you through your first bag step by step. Daily missions and passport stamps wait on the home screen.</div>
       <div class="small muted keys">On a computer: <b>Space</b> bid · <b>J</b> jump · <b>F</b> fold · drag with the mouse to scan.</div>
       <button class="btn primary" id="hgo">LET'S GO</button>
     </div>`;

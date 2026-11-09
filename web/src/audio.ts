@@ -60,10 +60,10 @@ export function unlock() {
     master.gain.value = muted ? 0 : 0.95;
     master.connect(comp);
     sfx = ctx.createGain();
-    sfx.gain.value = 0.85;
+    sfx.gain.value = 0.85 * vol.sfx;
     sfx.connect(master);
     music = ctx.createGain();
-    music.gain.value = 0.2;
+    music.gain.value = 0.4 * vol.music;
     music.connect(master);
     const verb = makeReverb();
     verbIn = ctx.createGain();
@@ -74,6 +74,28 @@ export function unlock() {
     brown = makeNoise(2, true);
   }
   if (ctx.state === 'suspended') void ctx.resume();
+}
+
+// Player volume settings, 0..1, kept on this device.
+const vol = (() => {
+  try {
+    return { music: 0.5, sfx: 1, haptics: true, ...JSON.parse(localStorage.getItem('fc:vol') ?? '{}') };
+  } catch {
+    return { music: 0.5, sfx: 1, haptics: true };
+  }
+})() as { music: number; sfx: number; haptics: boolean };
+
+export function getVolume() {
+  return { ...vol };
+}
+export function setVolume(v: Partial<typeof vol>) {
+  Object.assign(vol, v);
+  try {
+    localStorage.setItem('fc:vol', JSON.stringify(vol));
+  } catch {}
+  if (!ctx) return;
+  sfx.gain.setTargetAtTime(0.85 * vol.sfx, now(), 0.05);
+  music.gain.setTargetAtTime(0.4 * vol.music, now(), 0.05);
 }
 
 export function isMuted() {
@@ -555,6 +577,7 @@ export function stopMusic() {
 }
 
 export function buzz(ms: number | number[]) {
+  if (!vol.haptics) return;
   try {
     navigator.vibrate?.(ms);
   } catch {}

@@ -7,3 +7,4 @@ contract/target/
 ._*
 .DS_Store
 railway.env
+inbox/

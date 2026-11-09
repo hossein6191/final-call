@@ -78,6 +78,7 @@ export function board(root: HTMLElement) {
         if (e.kind === 'lot') text = e.winner ? `<b>${esc(e.name ?? nameOf(b.people, e.winner))}</b> won lot ${e.id} for ${fmt(e.price)} MI` : `Lot ${e.id} went unsold`;
         else if (e.kind === 'rival_sold') text = `<b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> sold lot ${e.lot}'s goods to the dealer for ${fmt(e.total)} MI`;
         else if (e.kind === 'grounded') text = `<b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> is broke and grounded for 30 minutes`;
+        else if (e.kind === 'player_loan') text = `<b>${esc(nameOf(b.people, e.account))}</b> took an emergency loan from the House`;
         else if (e.kind === 'loan') text = `The House lent <b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> ${fmt(e.amount)} MI`;
         else if (e.kind === 'order') text = `<b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> posted a buy order: ${esc(ITEM_BY_ID[e.item]?.name ?? e.item)} at ${fmt(e.price)}`;
         else if (e.kind === 'sealed') text = `${e.ids.length} new bags sealed on the board`;

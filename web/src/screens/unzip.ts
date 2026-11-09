@@ -5,6 +5,8 @@ import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { commitmentPreimage, type BagItem } from '../../../shared/rules.ts';
 import { iconSvg } from '../icons.ts';
 import { sound, buzz, tension } from '../audio.ts';
+import { coach, coachOff, coachActive } from '../ui/coach.ts';
+import { track } from '../ui/progress.ts';
 
 async function sha256hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -84,10 +86,11 @@ export function showSold(m: any) {
     </div>`;
   document.body.appendChild(el);
   const close = (hash: string) => {
+    coachOff();
     el.remove();
     go(hash);
   };
-  ($('#next', el) as HTMLButtonElement).onclick = () => close('#arrivals');
+  ($('#next', el) as HTMLButtonElement).onclick = () => close('#next');
   ($('#tobags', el) as HTMLButtonElement).onclick = () => close('#bags');
 
   // ---- local tag check ----
@@ -121,6 +124,7 @@ export function showSold(m: any) {
     $('#pdiff', el).textContent = `${diff >= 0 ? '+' : '−'}${fmt(Math.abs(diff))}`;
     if (!crossed && total >= m.price) {
       crossed = true;
+      track('profit');
       sound.breakEven();
       confetti();
     }
@@ -148,6 +152,8 @@ export function showSold(m: any) {
     // count-up length grows with value (log scale), rarer items get more rising notes
     ticker(t.querySelector('.val') as HTMLElement, value, Math.min(1500, 150 + Math.log10(Math.max(10, value)) * 300), rar >= 2 ? 3 + rar : 0);
     total += value;
+    if (won && rar >= 3) track('treasure');
+    if (won && rar >= 4) track('legendary');
     sound.pop(rar);
     if (rar >= 3) buzz(rar >= 4 ? [80, 40, 160] : 50);
     if (rar >= 3) tension.rumble(rar - 2);
@@ -164,6 +170,8 @@ export function showSold(m: any) {
     if (!t.classList.contains('pouch')) return;
     const rar = rarityOf(items[i].id, m.tier);
     const last = tiles.filter((x) => x.classList.contains('pouch')).length === 1;
+    if (won) track('pouch');
+    if (coachActive('u-pouch')) coachOff();
     // The last pouch decides the bag: drumroll, slow motion, longer hold.
     const wait = last ? Math.max(1400, [320, 420, 650, 900, 1300][rar] + 900) : [320, 420, 650, 900, 1300][rar];
     t.classList.remove('pouch');
@@ -175,6 +183,7 @@ export function showSold(m: any) {
     setTimeout(() => {
       revealTile(i);
       if (last && won) setTimeout(() => (total < m.price ? tension.deflate() : null), 500);
+      if (last && won) setTimeout(afterAll, 900);
       if (last && !won) setTimeout(verdict, 500);
     }, wait);
   };
@@ -186,6 +195,13 @@ export function showSold(m: any) {
     setTimeout(() => r.remove(), 1800);
   };
 
+  const afterAll = () => {
+    coach({
+      step: 'u-profit', target: $('.profit', el), title: total >= m.price ? 'Profit!' : 'A loss this time',
+      text: `The bar shows what is inside against what you paid. Past the white line is profit. ${total >= m.price ? 'Nice flip.' : 'It happens: pouches are a gamble.'}`,
+      ms: 4200, onClose: () => coach({ step: 'u-sell', target: $('#tobags', el), hand: 'tap', title: 'Turn finds into miles', text: 'Tap <b>SELL ITEMS</b> to sell to the Customs Dealer, or keep them for a rival collector who pays more.', button: 'GOT IT' }),
+    });
+  };
   const worth = (i: number) => valueOf(items[i].id, items[i].cond);
   const pouchIdx = items.map((it, i) => (it.pouch ? i : -1)).filter((i) => i >= 0).sort((a, b) => worth(a) - worth(b));
   const visIdx = items.map((it, i) => (!it.pouch ? i : -1)).filter((i) => i >= 0).sort((a, b) => worth(a) - worth(b));
@@ -217,12 +233,16 @@ export function showSold(m: any) {
         tiles.forEach((t, i) => items[i].pouch && (t.onclick = () => openPouch(i)));
         const all = $('#openall', el) as HTMLButtonElement;
         all.hidden = false;
+        const firstPouch = tiles.find((t) => t.classList.contains('pouch'));
+        if (firstPouch) coach({ step: 'u-pouch', target: firstPouch, hand: 'tap', title: 'Crack the pouches', text: 'Tap a sealed pouch to open it. The longer it shakes, the rarer the find.' });
+        else setTimeout(afterAll, 400);
         all.onclick = () => {
           all.hidden = true;
           pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), k * 520));
         };
       } else {
         pouchIdx.forEach((i, k) => setTimeout(() => openPouch(i), 300 + k * 420));
+        setTimeout(() => coach({ step: 'u-lost', target: $('#summary', el), title: 'Someone else won', text: 'You still get to see what was inside. Was it a jackpot you missed, or a bullet you dodged?', ms: 4200 }), 300 + pouchIdx.length * 420 + 1600);
         if (!pouchIdx.length) setTimeout(verdict, 400);
       }
     }, afterVis);
