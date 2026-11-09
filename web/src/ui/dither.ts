@@ -1,6 +1,5 @@
-// Animated dithering shader for the boarding pass, ported from the admit-one ticket
-// component (Paper Shaders' dithering shader, no React). WebGL2 only; callers keep a
-// canvas-texture fallback underneath.
+// Animated dithering shader for the boarding pass (Paper Shaders' dithering shader, see
+// README credits). WebGL2 only; callers keep a canvas-texture fallback underneath.
 
 const VERT = `#version 300 es
 precision mediump float;

@@ -17,7 +17,7 @@ function toggle(id: string, label: string, on: boolean, sub = '') {
     <button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}"><i></i></button></div>`;
 }
 
-/** Elastic slider (from the volume slider component): drag past an end and the track
+/** Elastic slider: drag past an end and the track
  *  stretches with a sigmoid pull, then springs back on release. */
 function elastic(r: HTMLInputElement, icon: HTMLElement | null, signal: AbortSignal) {
   const MAX = 50;

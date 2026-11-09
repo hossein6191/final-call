@@ -38,8 +38,8 @@ pub const MIN_STAKE: u64 = 100;
 pub const MAX_STAKE: u64 = 2_000;
 pub const STAKE_RETURN_PCT: u64 = 130;
 pub const STAKE_PAYOUT_PCT: u64 = 50;
-/// Gas money: a player who wins a bag gets a little NEAR from the contract, enough to pay for
-/// that bag and sell what is inside. Players never see a gas prompt or run dry.
+/// Gas money: whoever wins a bag gets a little NEAR from the contract, enough to pay for that
+/// bag and sell what is inside. Players never see a gas prompt, and rivals never run dry.
 pub const GAS_STIPEND: NearToken = NearToken::from_millinear(3);
 
 #[near(serializers = [borsh])]
@@ -540,8 +540,8 @@ impl FinalCall {
                 lot.status = LotStatus::AwaitingPayment;
                 lot.winner = Some(w.clone());
                 lot.price = price;
-                let is_player = self.profiles.get(w).map(|p| !p.rival).unwrap_or(false);
-                if is_player && env::account_balance() > NearToken::from_near(2) {
+                // Every winner gets gas money for paying and selling: players and rivals alike.
+                if env::account_balance() > NearToken::from_near(2) {
                     Promise::new(w.clone()).transfer(GAS_STIPEND).detach();
                     emit("gas_stipend", json!({"account_id": w, "yocto": GAS_STIPEND.as_yoctonear().to_string()}));
                 }

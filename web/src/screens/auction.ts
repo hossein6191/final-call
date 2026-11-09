@@ -22,7 +22,7 @@ interface Slot {
 }
 
 const SOLD_MS = 5000;
-// Animated bot (from the Lucide Animated bot icon): its eyes blink while the AI talks.
+// Animated bot icon (Lucide Animated, MIT): its eyes blink.
 const BOT = `<svg class="bot" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2"/><line class="eye" x1="15" x2="15" y1="13" y2="15"/><line class="eye" x1="9" x2="9" y1="13" y2="15"/></svg>`;
 const GAVEL = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="14" width="30" height="16" rx="4" transform="rotate(-30 23 22)" fill="#8b5a2b" stroke="#3b2410" stroke-width="2"/><rect x="26" y="26" width="6" height="34" rx="3" transform="rotate(-30 29 43)" fill="#a0522d" stroke="#3b2410" stroke-width="2"/><rect x="34" y="52" width="24" height="6" rx="2" fill="#5c3a1e"/></svg>`;
 const easeOutBack = (t: number) => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);

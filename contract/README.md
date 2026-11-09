@@ -1,63 +1,24 @@
-# Basic Auction Contract 
+# Final Call contract
 
-This directory contains a Rust contract that is used as part of the [Basic Auction Tutorial](https://docs.near.org/tutorials/auction/basic-auction).
+The on-chain half of Final Call, deployed at `finalcall.testnet`.
 
-The contract is a simple auction where you can place bids, view the highest bid, and claim the tokens at the end of the auction.
+- **Miles**: the game currency, a balance per account.
+- **Items**: NEP-245 multi-tokens, token id `<item>@<condition>` (`mt_balance_of`, `mt_supply`, `mt_*` events).
+- **Lots**: the House seals `sha256(contents + salt)` with `open_lots` before bidding; `close_lot` only accepts a reveal that matches. The winner pays with their own key (`pay_lot`).
+- **Customs Dealer**: `sell` pays the market price; each sale lowers that item's demand by 4% (floor 40%), and demand recovers 6% an hour.
+- **Buy orders**: escrowed offers any holder can fill (`post_order`, `fill_order`, `cancel_order`).
+- **Backing rivals**: a broke rival can be reopened by a player with `invest`; half of that rival's dealer sales repay backers 130% (`stakes` view).
+- **Accounts**: `create_account` makes `<sub>.finalcall.testnet` with one function-call key limited to the player methods, plus a little NEAR for gas. Every bag won adds a small gas stipend.
 
-This repo showcases the basic anatomy of a smart contract application on NEAR Protocol that showcases how to store data in a contract, how to update the state, and then how to read it.
-There are also unit tests, integration tests, and CI/CD pipelines preconfigured for your reference.
-
----
-
-## How to Build Locally?
-
-Install [`cargo-near`](https://github.com/near/cargo-near) and run:
-
-```bash
-cargo near build
-```
-
-## How to Test Locally?
+## Build and test
 
 ```bash
-cargo test
+cargo test                              # 18 unit tests
+cargo near build non-reproducible-wasm  # target/near/final_call.wasm
 ```
 
-## How to Deploy?
-
-Deployment is automated with GitHub Actions CI/CD pipeline.
-To deploy manually, install [`cargo-near`](https://github.com/near/cargo-near) and run:
-
-If you deploy for debugging purposes:
+## Deploy (code only, keeps state)
 
 ```bash
-cargo near deploy build-non-reproducible-wasm
+near contract deploy finalcall.testnet use-file target/near/final_call.wasm without-init-call network-config testnet sign-with-legacy-keychain send
 ```
-
-If you deploy production ready smart contract:
-
-```bash
-cargo near deploy build-reproducible-wasm
-```
-
-## Initialize the contract
-
-```bash
-# on Linux / Windows WSL
-TWO_MINUTES_FROM_NOW=$(date -d '+2 minutes' +%s000000000)
-# on MacOS
-TWO_MINUTES_FROM_NOW=$(date -v+2M +%s000000000)
-
-near contract call-function as-transaction '<CONTRACT_ACCOUNT_ID>' init json-args '{"end_time": "'$TWO_MINUTES_FROM_NOW'", "auctioneer": "<AUCTIONEER_ACCOUNT_ID>"}' prepaid-gas '30.0 Tgas' attached-deposit '0 NEAR'
-```
-
-## Useful Links
-
-- [cargo-near](https://github.com/near/cargo-near) - NEAR smart contract development toolkit for Rust
-- [near CLI](https://near.cli.rs) - Interact with NEAR blockchain from command line
-- [NEAR Rust SDK Documentation](https://docs.near.org/sdk/rust/introduction)
-- [NEAR Documentation](https://docs.near.org)
-- [NEAR StackOverflow](https://stackoverflow.com/questions/tagged/nearprotocol)
-- [NEAR Discord](https://near.chat)
-- [NEAR Telegram Developers Community Group](https://t.me/neardev)
-- NEAR DevHub: [Telegram](https://t.me/neardevhub), [Twitter](https://twitter.com/neardevhub)

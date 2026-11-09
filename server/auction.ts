@@ -414,7 +414,7 @@ export class Auction {
         await rivalWon(winner.rival, id, (hash) => {
           setBag(id, { paid_tx: hash, status: 'paid' });
           this.send({ type: 'lot:paid', lotId: id, tx: hash, url: txUrl(hash), by: winner.id });
-        }).finally(() => (winner.rival!.committed = Math.max(0, winner.rival!.committed - price)));
+        }, () => this.send({ type: 'lot:payretry', lotId: id, by: winner.id })).finally(() => (winner.rival!.committed = Math.max(0, winner.rival!.committed - price)));
       }
     } catch (e) {
       const msg = panicMessage(e);

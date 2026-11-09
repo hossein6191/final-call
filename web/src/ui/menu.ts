@@ -1,4 +1,4 @@
-// The Esc menu (from the pause-menu component): resume, how to play, settings, and a way
+// The Esc menu: resume, how to play, settings, and a way
 // out. Auctions run on the server clock, so "pause" here is a menu, not a freeze.
 import { live } from '../net.ts';
 import { sound } from '../audio.ts';

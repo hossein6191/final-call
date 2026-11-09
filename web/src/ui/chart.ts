@@ -1,6 +1,5 @@
 // "Net worth" card: a smooth curve of the player's worth over time with a hover tooltip.
-// Ported from the analytics bento card (no React): same tension curve, dashed guides,
-// glowing dot and floating tooltip.
+// Based on a community analytics card: tension curve, dashed guides, glowing dot and tooltip.
 import { fmt } from '../state.ts';
 
 export interface Pt { t: number; v: number }

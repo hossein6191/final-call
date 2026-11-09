@@ -268,10 +268,20 @@ export function showSold(m: any) {
       $('#v-pay', el) && ($('#v-pay', el).innerHTML = `<i>✅</i><span>${esc(m.winnerName)} paid with their own key · ${txLink(x.tx)}</span>`);
       off();
     }
+    if (x.type === 'lot:payretry') {
+      const v = $('#v-pay', el);
+      if (v) v.innerHTML = `<i>⏳</i><span>${esc(m.winnerName)}'s payment did not go through yet. It retries automatically; the <a href="#lot/${m.lotId}">lot page</a> shows it once it lands.</span>`;
+    }
     if (x.type === 'lot:error') {
       toast(`Settlement hiccup on lot ${m.lotId}: ${esc(x.message)}`);
     }
   });
   if (!won && !m.winner) setTimeout(off, 20000);
+  // Never spin forever: if no payment news arrives, say what happens next.
+  if (m.winner && !won)
+    setTimeout(() => {
+      const v = $('#v-pay', el);
+      if (v && v.querySelector('.spinner')) v.innerHTML = `<i>⏳</i><span>${esc(m.winnerName)}'s payment is taking a while on the network. It goes through on its own; the <a href="#lot/${m.lotId}">lot page</a> shows it once it lands.</span>`;
+    }, 45000);
   if (won) setTimeout(off, 60000);
 }

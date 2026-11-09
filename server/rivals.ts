@@ -100,9 +100,12 @@ function enqueue(r: RivalState, job: () => Promise<unknown>) {
 }
 
 /** The rival pays for a lot it won, then keeps what it loves and sells the rest. */
-export function rivalWon(r: RivalState, lotId: number, onPaid: (hash: string, tokens: string[]) => void) {
+export function rivalWon(r: RivalState, lotId: number, onPaid: (hash: string, tokens: string[]) => void, onRetry?: (why: string) => void) {
   return enqueue(r, async () => {
-    const paid = await rivalTx<string[]>(r.def.sub, 'pay_lot', { id: lotId });
+    const paid = await rivalTx<string[]>(r.def.sub, 'pay_lot', { id: lotId }).catch((e) => {
+      onRetry?.(panicMessage(e)); // the recovery loop pays it later
+      throw e;
+    });
     onPaid(paid.hash, paid.value);
     const counts = new Map<string, number>();
     for (const t of paid.value) {

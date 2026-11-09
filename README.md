@@ -95,7 +95,14 @@ Add `NEARAI_API_KEY` to `.env` for NEAR AI rival lines; without it rivals use sc
 
 ## Built during the hackathon
 
-All code in this repository was written between 2026-11-08 and 2026-11-14 for NEAR HACKATHON, with Claude Code. Libraries: `near-sdk` 5.30, `near-api-js` 7.4, `@noble/curves`, `@noble/hashes`, `ws`, `vite`. No art or audio files: item art is vector paths in `web/src/icons.ts`, and every sound is synthesized in `web/src/audio.ts`.
+Final Call was built from scratch between 2026-11-08 and 2026-11-14 for NEAR HACKATHON by hossein6191, who chose the concept, directed the design and every change, and playtested each build on phone and desktop. Most of the code was written with an AI coding assistant (Claude Code) working from that direction, which the hackathon rules allow (Q-005).
+
+Libraries: `near-sdk` 5.30, `near-api-js` 7.4, `@noble/curves`, `@noble/hashes`, `ws`, `vite`. No art or audio files: item art is vector paths in `web/src/icons.ts`, and every sound is synthesized in `web/src/audio.ts`.
+
+Adapted UI pieces, rewritten without React:
+- Boarding pass texture: the dithering shader from [Paper Shaders](https://github.com/paper-design/shaders), via a community "admit one ticket" component.
+- Animated bot icon: [Lucide Animated](https://github.com/pqoqubbw/icons) by pqoqubbw (MIT).
+- Hourglass, elastic volume slider, net worth card, pause menu, dock magnification: community React components from 21st.dev, re-implemented for this game.
 
 ## License
 

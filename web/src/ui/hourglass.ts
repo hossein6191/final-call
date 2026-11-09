@@ -1,6 +1,6 @@
 // A live hourglass: sand drains through the neck as a stream of grains that land and roll
-// on the mound, then the glass turns over and starts again. Ported from the hourglass
-// component (no React): a fixed pool of grain circles is moved directly every frame.
+// on the mound, then the glass turns over and starts again. A fixed pool of grain circles
+// is moved directly every frame.
 
 const NECK = 80;
 const FULL = 56;
