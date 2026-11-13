@@ -24,6 +24,50 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
 - **Back a broke rival.** A rival who runs out of miles closes up shop. Any player can reopen them with a stake of 100–2,000 miles; the contract then pays the backer 130% back, automatically, from half of everything that rival sells to the dealer. If nobody steps in for three hours, the House bails them out.
 - **No wallet, no gas.** You pick a nickname. Your browser makes a key, the contract creates your account holding only a key that can call the seven player methods, and every game transaction is signed in the background. Each bag you win comes with a little NEAR from the contract to pay for its own transactions, so you never see a gas prompt or run dry.
 
+## How to play
+
+1. **Check in** with a nickname. No wallet, no seed phrase.
+2. **Pick a bag** on the Arrivals board (FLIGHTS). Three halls: Domestic is open; International opens at 3,000 net worth, the Lounge at 12,000.
+3. **Scan it.** For a few seconds the bag sits under the X-ray: drag across it, tap a silhouette to see what it is worth. Dark pouches stay sealed.
+4. **Bid.** Every bid restarts a 5-second clock (going once, going twice, SOLD). JUMP adds three steps at once; FOLD walks away.
+5. **Unzip and sell.** Open the pouches, then sell to the Customs Dealer or fill a rival's buy order. Profit is what is inside minus what you paid.
+
+Learning is built in: a **How to play** guide on first visit (and the **?** button), a **round briefing** before every bag, and a **coach** that walks you through your first bag step by step. Replay the coach any time from **Settings → Replay the tutorial**; the briefing can be turned off there too.
+
+## Everything in the game
+
+**At the table**
+- X-ray belt with Geiger-style clicks over valuable items, appraisal on tap, sealed and glinting pouches.
+- Six rivals with their own personalities, faces that react, numbered paddles, tells before they bid, and lines that never repeat until the pool is used up.
+- NEAR AI stances (PASS → CHASE) shown on each rival a few seconds into the scan, and their private thoughts after the hammer.
+- A host who names tonight's table, its tricks and whether a cheater may be sitting there.
+- Rival tricks: Dash's **Lights out**, Big Sal's **Make it rain**, Professor Odo's **Lecture** fog.
+- Secret team-ups between two rivals, revealed after the hammer.
+- A secret cheater at some tables, and a **Report a cheater** button that bans them for 6 hours when you are right.
+- Difficulty (Easy, Normal, Hard) that changes rival caps and the odds of tricks, team-ups and cheaters.
+- Heartbeat and red vignette on "going twice", snipe and bidding-war call-outs, head-to-head duels, hitstop and gavel on SOLD.
+
+**After the hammer**
+- Unzip animation, pouches you crack open one by one, rarity glows, drumroll on the last pouch.
+- A Proof panel that checks the bag's seal in your browser and links every transaction.
+- Customs Dealer with prices that fall per sale for everyone; escrowed buy orders from collector rivals.
+
+**Between bags**
+- Lobby: a live baggage carousel, your boarding pass (class follows your best hall), net worth chart, three daily missions, 14 stamps to earn.
+- **Share your pass**: the pass is printed as an image to post on X (native share on phones, ready-made post on computers).
+- Album of all 35 items you can find, and which rivals collect them.
+- Rivals who slide in from the edge of the screen to tease you about your run.
+- **Bribe the guard** on a locked hall: a joke "cheat" that lets you look at that hall's top finds and bags, look only.
+- Board: players and rivals ranked by net worth from the contract, a live feed of wins, sales, orders, loans, bankruptcies, bans and rivals-only lots, and **Simulate a week**.
+- Back a broke rival (BACK ME) and get 130% back from their sales; take a House loan of 300 miles if you go broke yourself.
+- Rivals-only auctions every 20 minutes, so the floor keeps moving while you are away.
+
+**Phone and computer**
+- Built phone-first; on a computer wider than 1,100 px it switches to a desktop layout with a side panel (rivals, missions, feed, live bid log).
+- Keyboard: Space bid, J jump, F fold, Esc pause menu.
+- Settings: music and effects volume, sound on or off, vibration, round briefing, rival difficulty, tutorial replay.
+- All art is vector and every sound is synthesized in the browser: nothing to download.
+
 ## Try it (do X → see Y)
 
 1. Open https://final-call.up.railway.app on a phone or a computer (Chrome gets a full desktop layout), type a nickname, then tap **CHECK IN**.
@@ -90,7 +134,7 @@ Requirements: Node 24+, Rust 1.95 (pinned by `contract/rust-toolchain.toml`), `c
 ```bash
 npm install
 npm test                                  # 9 JS tests (commitment format, bags, X-ray privacy, simulator, signature recovery)
-(cd contract && cargo test)               # 14 contract unit tests
+(cd contract && cargo test)               # 18 contract unit tests
 node scripts/simulate.ts                  # the week fast-forward, in the terminal
 (cd contract && cargo near build non-reproducible-wasm)
 node scripts/init-args.ts <your-account>.testnet > init.json
