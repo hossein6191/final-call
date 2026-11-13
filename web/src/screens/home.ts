@@ -168,7 +168,7 @@ export function home(root: HTMLElement) {
     $('#floor', root).innerHTML = rivals
       .map((p: any) => {
         const def = state.cfg!.rivals.find((r) => r.account === p.account);
-        return `<button class="floor-chip ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<b style="color:${def?.color ?? '#fff'}">${esc(p.name)}</b><small>${p.miles < 100 ? '<span class="back-me">BACK ME</span>' : p.grounded ? 'grounded' : `${fmt(p.miles ?? p.netWorth)} MI`}</small></button>`;
+        return `<button class="floor-chip ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<b style="color:${def?.color ?? '#fff'}">${esc(p.name)}</b><small>${p.banned ? '<span class="banned-tag">BANNED</span>' : p.miles < 100 ? '<span class="back-me">BACK ME</span>' : p.grounded ? 'grounded' : `${fmt(p.miles ?? p.netWorth)} MI`}</small></button>`;
       })
       .join('');
     root.querySelectorAll<HTMLButtonElement>('.floor-chip').forEach((el) => (el.onclick = () => { sound.tap(); rivalSheet(el.dataset.acc!, b); }));

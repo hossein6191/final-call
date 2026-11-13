@@ -14,6 +14,8 @@ export interface RivalState {
   inventory: [string, number][];
   committed: number; // miles promised to live auctions
   groundedUntil: number;
+  /** Caught cheating: out of every lineup until this time. */
+  bannedUntil: number;
   busy: Promise<unknown>;
 }
 
@@ -27,6 +29,7 @@ for (const def of RIVALS) {
     inventory: [],
     committed: 0,
     groundedUntil: 0,
+    bannedUntil: 0,
     busy: Promise.resolve(),
   });
 }
@@ -45,10 +48,19 @@ export async function syncRivals() {
 
 export const freeMiles = (r: RivalState) => Math.max(0, r.miles - r.committed);
 export const isGrounded = (r: RivalState, now = Date.now()) => r.groundedUntil > now || r.miles < 100;
+export const isBanned = (r: RivalState, now = Date.now()) => r.bannedUntil > now;
+export const BAN_MS = 6 * 3600 * 1000;
+
+/** The most recent ban, so the rest of the floor can gossip about it. */
+export let lastBan: { sub: string; name: string; at: number } | null = null;
+export function banRival(r: RivalState, until: number, at = Date.now()) {
+  r.bannedUntil = Math.max(r.bannedUntil, until);
+  if (!lastBan || at > lastBan.at) lastBan = { sub: r.def.sub, name: r.def.name, at };
+}
 
 /** Three rivals for a lot. Contents never change; only the lineup adapts. */
 export function pickLineup(opts: { lossStreak: number; dominant: boolean; minMiles: number }): RivalState[] {
-  const pool = [...rivals.values()].filter((r) => !isGrounded(r) && freeMiles(r) >= opts.minMiles);
+  const pool = [...rivals.values()].filter((r) => !isGrounded(r) && !isBanned(r) && freeMiles(r) >= opts.minMiles);
   const shuffled = pool.sort(() => Math.random() - 0.5);
   let picked = shuffled.slice(0, 3);
   if (opts.lossStreak >= 3) {

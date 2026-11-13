@@ -11,6 +11,7 @@ import { track, seen } from '../ui/progress.ts';
 import { nextTip, hourglassSvg } from '../ui/bits.ts';
 import { briefing } from '../ui/briefing.ts';
 import { getLevel } from '../ui/level.ts';
+import { showHost, blackout, rain, fog } from '../ui/powers.ts';
 
 interface Slot {
   m: ManifestSlot;
@@ -597,6 +598,7 @@ export function auction(root: HTMLElement, lotId: number) {
     if (m.lotId !== undefined && m.lotId !== lotId && m.type.startsWith('auction')) return;
     switch (m.type) {
       case 'auction:start': {
+        if (m.table) setTimeout(() => phase !== 'sold' && showHost($('#auctionRoot', root), m.table), 900);
         if (m.level && m.level !== 'normal') $('#lvchip', root).innerHTML = `<span class="chip lv-${esc(m.level)}">${esc(String(m.level).toUpperCase())}</span>`;
         startMsg = m;
         tier = m.tier;
@@ -612,6 +614,10 @@ export function auction(root: HTMLElement, lotId: number) {
         chip.innerHTML = `🔒 tag ${short(m.commitment, 6)}`;
         chip.onclick = () => window.open(`#lot/${lotId}`, '_blank');
         drawRivals(m.rivals);
+        for (const r of m.table?.rivals ?? []) {
+          const card = [...rivalCards.values()].find((c) => c.dataset.acc === state.cfg!.rivals.find((x) => x.sub === r.sub)?.account);
+          if (r.power && card) card.insertAdjacentHTML('beforeend', `<div class="trick" title="${esc(r.power.name)}: ${esc(r.power.text)}">⚡</div>`);
+        }
         $('#boarding', root)?.remove();
         layout();
         appraise();
@@ -749,6 +755,19 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'auction:say':
         say(m.by, m.line);
         break;
+      case 'power': {
+        const sub = state.cfg!.rivals.find((r) => r.account === m.by)?.sub ?? '';
+        if (m.kind === 'blackout') blackout($('#auctionRoot', root), sub, m.name, m.line, m.ms);
+        else if (m.kind === 'rain') {
+          rain($('#auctionRoot', root), m.ms);
+          say(m.by, m.line);
+        } else if (m.kind === 'fog') {
+          fog($('#belt', root), m.ms);
+          say(m.by, m.line);
+        }
+        mood(m.by, 'happy', 1800);
+        break;
+      }
       case 'auction:refused':
         sound.error();
         toast(esc(m.reason));
@@ -793,6 +812,8 @@ export function auction(root: HTMLElement, lotId: number) {
           if (!card) continue;
           card.querySelector('.stance')?.remove();
           card.insertAdjacentHTML('beforeend', `<div class="stance s-${esc(d.stance)}" title="Stance chosen by NEAR AI">${esc(d.stance.toUpperCase())}</div>`);
+          const pw = (startMsg?.table?.rivals ?? []).find((r: any) => r.sub === (state.cfg!.rivals.find((x) => x.account === d.account)?.sub));
+          if (pw?.power && !card.querySelector('.trick')) card.insertAdjacentHTML('beforeend', `<div class="trick" title="${esc(pw.power.text)}">⚡</div>`);
           if (d.stance === 'chase' || d.stance === 'keen') mood(d.account, 'happy', 1600);
           else if (d.stance === 'pass') mood(d.account, 'sad', 1600);
           else mood(d.account, 'think', 1600);

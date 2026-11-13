@@ -248,6 +248,20 @@ export const sound = {
   tap() {
     wood(R(1500, 1900), { peak: 0.1, decay: 0.03 });
   },
+  /** A rival's cackle: five "ha"s, each a voiced burst falling in pitch. */
+  laugh() {
+    for (let i = 0; i < 5; i++) {
+      const at = i * 0.16;
+      const f = 260 - i * 18 + R(-8, 8);
+      osc('sawtooth', f, 0.11, { at, to: f * 0.82, peak: 0.07 });
+      osc('sine', f * 2, 0.1, { at, to: f * 1.6, peak: 0.04 });
+      noise(0.09, { at, f: R(900, 1300), q: 2.5, peak: 0.08 });
+    }
+  },
+  /** Coins pouring onto the table. */
+  coins() {
+    for (let i = 0; i < 16; i++) clink(R(2600, 4200), { at: i * 0.045 + R(0, 0.03), peak: 0.035 });
+  },
   bid(price: number, mine: boolean) {
     // a paddle swishes up and taps: higher as the price climbs
     const f = 240 + Math.min(420, Math.log2(1 + price / 50) * 55);

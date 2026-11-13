@@ -49,7 +49,28 @@ CREATE TABLE IF NOT EXISTS rivalry (
   rival_wins INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (player, rival)
 );
+-- Who sat at each table, and which rival (if any) secretly peeked inside the bag.
+CREATE TABLE IF NOT EXISTS tables (
+  lot_id INTEGER PRIMARY KEY,
+  player TEXT NOT NULL,
+  cheater TEXT,
+  reported TEXT,
+  verdict TEXT,
+  ts INTEGER NOT NULL
+);
 `);
+
+export interface TableRow { lot_id: number; player: string; cheater: string | null; reported: string | null; verdict: string | null; ts: number }
+export function saveTable(lotId: number, player: string, cheater: string | null) {
+  db.prepare('INSERT OR REPLACE INTO tables (lot_id, player, cheater, ts) VALUES (?, ?, ?, ?)').run(lotId, player, cheater, Date.now());
+}
+export function getTable(lotId: number): TableRow | undefined {
+  return db.prepare('SELECT * FROM tables WHERE lot_id = ?').get(lotId) as TableRow | undefined;
+}
+/** Records a report once; returns false if this table was already reported. */
+export function markReported(lotId: number, rival: string, verdict: string): boolean {
+  return db.prepare('UPDATE tables SET reported = ?, verdict = ? WHERE lot_id = ? AND reported IS NULL').run(rival, verdict, lotId).changes === 1;
+}
 
 export interface BagRow {
   id: number;

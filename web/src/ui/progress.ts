@@ -6,7 +6,7 @@ import { sound } from '../audio.ts';
 
 export type Stat =
   | 'appraise' | 'bid' | 'win' | 'profit' | 'treasure' | 'legendary' | 'snipe' | 'war'
-  | 'sell' | 'fill' | 'pouch' | 'fullscan' | 'beatSal' | 'jump' | 'duel' | 'invest';
+  | 'sell' | 'fill' | 'pouch' | 'fullscan' | 'beatSal' | 'jump' | 'duel' | 'invest' | 'catch';
 
 interface Store {
   life: Partial<Record<Stat, number>>;
@@ -84,6 +84,7 @@ export const STAMPS: Stamp[] = [
   { id: 'appraiser', title: 'Sharp Eye', text: 'Appraise 25 items', color: '#9fe0ff', glyph: '◎' },
   { id: 'salslayer', title: 'Whale Hunter', text: 'Outbid Big Sal', color: '#ffd23f', glyph: '♛' },
   { id: 'angel', title: 'Angel Investor', text: 'Back a broke rival', color: '#3ddc84', glyph: '♥' },
+  { id: 'sheriff', title: 'Sheriff', text: 'Catch a rival cheating', color: '#ff8fa3', glyph: '⚑' },
   { id: 'intl', title: 'Globetrotter', text: 'Unlock the International terminal', color: '#2b4c7e', glyph: '⊕' },
   { id: 'lounge', title: 'Lounge Access', text: 'Unlock the Lounge', color: '#9b2a50', glyph: '♜' },
 ];
@@ -99,6 +100,7 @@ const STAMP_RULES: [string, () => boolean][] = [
   ['appraiser', () => (store.life.appraise ?? 0) >= 25],
   ['salslayer', () => (store.life.beatSal ?? 0) >= 1],
   ['angel', () => (store.life.invest ?? 0) >= 1],
+  ['sheriff', () => (store.life.catch ?? 0) >= 1],
 ];
 
 export function stamps() {

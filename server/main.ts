@@ -6,12 +6,12 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { PublicKey } from 'near-api-js';
 import { cfg } from './config.ts';
-import { db, getBag, setBag, recentFeed, addFeed, type BagRow } from './db.ts';
+import { db, getBag, setBag, recentFeed, addFeed, getTable, markReported, type BagRow } from './db.ts';
 import { house, panicMessage, provider, txUrl, view } from './chain.ts';
 import { arrivals, claimBag, fillPool, sealTutorialBag, toPublic } from './bags.ts';
 import { Auction } from './auction.ts';
 import type { Level } from './auction.ts';
-import { economyTick, pickLineup, rivalWon, rivals, syncRival, syncRivals } from './rivals.ts';
+import { economyTick, pickLineup, rivalWon, rivals, syncRival, syncRivals, banRival, isBanned, BAN_MS } from './rivals.ts';
 import { RIVALS } from '../shared/rivals.ts';
 import { ITEM_BY_ID, LADDER } from '../shared/catalog.ts';
 import { COND_BP, TERMINALS } from '../shared/rules.ts';
@@ -72,6 +72,8 @@ async function board() {
         account: p.account_id, name: p.nickname, rival: p.rival, color: r?.color ?? null, title: r?.title ?? null,
         miles: p.miles, items, debt: p.debt, netWorth: p.miles + items - p.debt, won: p.lots_won, spent: p.spent, earned: p.earned,
         grounded: r ? (rivals.get(r.sub)!.groundedUntil > Date.now() || p.miles < 100) : false,
+        banned: r ? isBanned(rivals.get(r.sub)!) : false,
+        bannedUntil: r ? rivals.get(r.sub)!.bannedUntil : 0,
         groundedUntil: r ? rivals.get(r.sub)!.groundedUntil : 0,
       };
     })
@@ -140,7 +142,8 @@ function lotPublic(r: BagRow) {
     paidTx: r.paid_tx,
     winner: r.winner,
     price: r.price,
-    rivals: r.rivals ? JSON.parse(r.rivals) : null,
+    // Rival limits stay hidden while the bag can still be bid on.
+    rivals: revealed && r.rivals ? JSON.parse(r.rivals) : null,
     ai: r.ai ? JSON.parse(r.ai) : null,
     tokens: revealed ? JSON.parse(r.items) : null,
     salt: revealed ? r.salt : null,
@@ -249,6 +252,40 @@ const server = createServer(async (req, res) => {
         boardCache.at = 0;
       }
       return json(res, 200, { miles: r.miles, ok: Boolean(stake) });
+    }
+    if (p === '/api/report' && req.method === 'POST') {
+      // A player accuses a rival at their last table of peeking inside the bag. The rest of the
+      // table weighs in; if the accused really cheated, they are banned from the floor.
+      const body = await readBody(req);
+      const t = getTable(Number(body.lotId));
+      if (!t || t.player !== String(body.account)) return json(res, 404, { error: 'You can only report a table you sat at.' });
+      if (t.reported) return json(res, 409, { error: 'This table was already reported.' });
+      const bag = getBag(t.lot_id);
+      if (!bag || ['sealing', 'ready', 'auction'].includes(bag.status)) return json(res, 409, { error: 'Wait for the hammer first.' });
+      const r = [...rivals.values()].find((x) => x.account === body.rival);
+      const seated = bag.rivals ? (JSON.parse(bag.rivals) as { account: string; name: string }[]) : [];
+      if (!r || !seated.some((x) => x.account === r.account)) return json(res, 404, { error: 'That rival was not at your table.' });
+      const guilty = t.cheater === r.account;
+      if (!markReported(t.lot_id, r.account, guilty ? 'guilty' : 'innocent')) return json(res, 409, { error: 'This table was already reported.' });
+      const others = seated.filter((x) => x.account !== r.account).map((x) => x.name);
+      const nick = (db.prepare('SELECT nickname FROM players WHERE account_id = ?').get(t.player) as any)?.nickname ?? 'A traveller';
+      let until = 0;
+      if (guilty) {
+        until = Date.now() + BAN_MS;
+        banRival(r, until);
+        addFeed('banned', { rival: r.def.sub, by: nick, lot: t.lot_id, until });
+        boardCache.at = 0;
+      }
+      const voices = guilty
+        ? [
+            { name: others[0], line: `I knew it! Nobody reads a sealed pouch that well.` },
+            { name: others[1], line: `${r.def.name} bid like they had seen inside. Out!` },
+          ]
+        : [
+            { name: r.def.name, line: `Me? I just have good instincts, ${nick}.` },
+            { name: others[0], line: `Clean, as far as I could tell. Sorry, ${nick}.` },
+          ];
+      return json(res, 200, { guilty, rival: r.def.name, until, voices: voices.filter((v) => v.name), cheater: guilty ? r.def.name : null });
     }
     if (p === '/api/found') {
       // Every item the player has ever won (from closed lots, whose contents are public on chain).
@@ -464,5 +501,46 @@ server.listen(cfg.port, async () => {
   setInterval(() => void fillPool().catch(() => {}), 20_000);
   setInterval(() => void economyTick().catch((e) => console.error('economy', panicMessage(e))), 60_000);
   setInterval(() => void reconcile().then(() => recover(false)).catch((e) => console.error('recover', panicMessage(e))), 30_000);
+  setInterval(() => void rivalsOnlyLot().catch((e) => console.error('rivals-only lot', panicMessage(e))), 60_000);
 });
+
+// Bans survive a restart: they are rebuilt from the feed.
+for (const row of db.prepare("SELECT ts, data FROM feed WHERE kind = 'banned' ORDER BY id").all() as { ts: number; data: string }[]) {
+  const d = JSON.parse(row.data);
+  const r = rivals.get(d.rival);
+  if (r && d.until > Date.now()) banRival(r, d.until, row.ts);
+}
+
+// ---------- rivals-only lots ----------
+
+/** Every 20 minutes the rivals hold an auction among themselves, with no human at the table:
+ *  the bag is sealed on chain, NEAR AI decides each rival's stance, the winner pays from its own
+ *  wallet, and the result lands in the feed like any other lot. */
+const SOLO_EVERY_MS = 20 * 60 * 1000;
+let soloAt = Date.now() + 3 * 60 * 1000;
+let soloLive: Auction | null = null;
+async function rivalsOnlyLot() {
+  if (Date.now() < soloAt || (soloLive && soloLive.phase !== 'done')) return;
+  soloAt = Date.now() + SOLO_EVERY_MS;
+  // Leave at least two bags on each belt for players.
+  const pick = db
+    .prepare("SELECT id, tier FROM bags WHERE status = 'ready' AND reserved_for IS NULL AND tier <= 1 ORDER BY tier, id")
+    .all() as { id: number; tier: number }[];
+  const counts = new Map<number, number>();
+  for (const b of pick) counts.set(b.tier, (counts.get(b.tier) ?? 0) + 1);
+  const choice = pick.find((b) => (counts.get(b.tier) ?? 0) > 2);
+  if (!choice) return;
+  const bag = claimBag(choice.id, 'floor');
+  if (!bag) return;
+  const lineup = pickLineup({ lossStreak: 0, dominant: false, minMiles: bag.opening });
+  if (lineup.length < 2) {
+    setBag(bag.id, { status: 'ready' });
+    return;
+  }
+  soloLive = new Auction(bag, { account: 'floor', nickname: 'the floor', miles: 0, ghost: true }, lineup, () => {}, () => {
+    boardCache.at = 0;
+    void fillPool();
+  });
+  soloLive.start();
+}
 

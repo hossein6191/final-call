@@ -918,3 +918,50 @@ kbd, .kbd { display: inline-block; font-family: var(--mono); font-size: 11px; pa
 .peek-finds b { font-size: 12px; line-height: 1.2; }
 .peek-finds small { color: var(--sign); font-family: var(--mono); font-size: 11px; }
 .bagrow.peeking { opacity: .7; cursor: default; }
+
+/* ---------- level details ---------- */
+.level-more { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); display: grid; gap: 2px; }
+
+/* ---------- table host ---------- */
+.host { position: absolute; left: 10px; right: 10px; top: 54px; z-index: 12; display: flex; align-items: flex-start; gap: 8px; background: none; border: 0; cursor: pointer; animation: cameo-l .5s cubic-bezier(.2,1.4,.4,1) both; }
+.host.out { animation: cameo-l-out .35s ease-in both; }
+.host-face { width: 58px; height: 58px; flex: none; filter: drop-shadow(0 6px 12px rgba(0,0,0,.5)); }
+.host-bub { background: #f4f1e8; color: #1b1f2a; border-radius: 14px 14px 14px 4px; padding: 9px 12px; font-size: 13px; line-height: 1.35; box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+.host-bub > b { display: block; font-family: var(--display); font-size: 15px; letter-spacing: .04em; }
+.host-bub ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 2px; }
+.rival .trick { position: absolute; top: 4px; left: 6px; font-size: 13px; filter: drop-shadow(0 0 4px rgba(255,210,63,.7)); }
+
+/* ---------- lights out ---------- */
+.blackout { position: absolute; inset: 0; z-index: 30; background: rgba(0,0,0,.96); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 20px; animation: bo-in .18s ease-out both; }
+.blackout.out { animation: fadeout .3s ease-in both; }
+.blackout b { font-family: var(--display); font-size: 42px; letter-spacing: .1em; color: #ffd23f; text-shadow: 0 0 24px rgba(255,210,63,.5); }
+.blackout span { color: #c9cfdb; font-size: 15px; max-width: 320px; }
+.bo-face { width: 110px; height: 110px; animation: wiggle .5s ease-in-out infinite; }
+.bo-face svg { width: 100%; height: 100%; }
+#bid.dark, #jump.dark { opacity: .25; pointer-events: none; }
+@keyframes bo-in { from { opacity: 0; } 30% { opacity: 1; background: #000; } }
+@keyframes fadeout { to { opacity: 0; } }
+
+/* ---------- make it rain ---------- */
+.rain { position: absolute; inset: 0; z-index: 25; pointer-events: none; overflow: hidden; }
+.rain i { position: absolute; top: -20px; width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff3b0, #ffd23f 45%, #b8860b); box-shadow: 0 0 6px rgba(255,210,63,.6); animation: coin linear both; }
+@keyframes coin { to { transform: translateY(110vh) rotate(720deg); } }
+.auction.shake { animation: tshake .5s; }
+@keyframes tshake { 10%, 50%, 90% { transform: translate(-4px, 2px); } 30%, 70% { transform: translate(4px, -2px); } }
+
+/* ---------- lecture fog ---------- */
+.fog { position: absolute; inset: 0; z-index: 5; pointer-events: none; background: radial-gradient(120% 90% at 30% 50%, rgba(210,220,235,.92), rgba(160,175,200,.8) 60%, rgba(120,135,160,.7)); filter: blur(2px); animation: fogin .5s ease-out both; }
+.fog.out { animation: fadeout .5s ease-in both; }
+@keyframes fogin { from { opacity: 0; transform: scale(1.1); } }
+
+/* ---------- report a cheater ---------- */
+.report { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.report small { color: var(--muted); font-size: 12px; }
+.rpt-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.rpt-pick .btn { flex-direction: column; gap: 2px; font-size: 14px; padding: 8px 4px; min-height: 0; }
+.rpt-pick .btn svg { width: 40px; height: 40px; }
+.verdict { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.verdict .stamp { align-self: center; }
+.banned-tag { color: #ff8fa3; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+.solo { color: var(--muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .host, .blackout, .bo-face, .rain i, .auction.shake, .fog { animation: none !important; } }

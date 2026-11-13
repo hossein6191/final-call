@@ -33,9 +33,10 @@ export interface Verification {
 
 export const STANCES = { pass: 0.6, careful: 0.85, fair: 1, keen: 1.12, chase: 1.25 } as const;
 export type Stance = keyof typeof STANCES;
-export interface Mind { stance: Stance; thought: string }
+export interface Mind { stance: Stance; thought: string; ally?: string }
 /** What a rival knows before it decides: its own appraisal and how much it may spend. */
-export interface Brief { estimate: number; budget: number; loves?: string[] }
+export interface Brief { estimate: number; budget: number; loves?: string[]; peeked?: number }
+export interface TableOpts { headless?: boolean; teamUps?: boolean; gossip?: string }
 
 export interface Voiced {
   source: 'near-ai' | 'scripted';
@@ -167,12 +168,14 @@ export async function verifyCompletion(id: string, model: string, requestBody: s
  * Asks NEAR AI for every rival's lines in one call. The prompt only contains what the X-ray
  * shows, never the sealed contents, so the request hash proves the rivals bid blind.
  */
-export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'the newcomer', memory = '', briefs: Record<string, Brief> = {}): Promise<Voiced> {
+export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'the newcomer', memory = '', briefs: Record<string, Brief> = {}, table: TableOpts = {}): Promise<Voiced> {
   if (!cfg.nearAiKey) return { source: 'scripted', lines: scriptedLines(lineup, player, memory), error: 'no NEAR AI key' };
   const people = lineup
     .map((r) => {
       const b = briefs[r.sub];
-      const know = b ? ` Their own appraisal: about ${b.estimate} miles. They can spend at most ${b.budget}.${b.loves?.length ? ` They collect: ${b.loves.join(', ')}.` : ''}` : '';
+      const know = b
+        ? ` Their own appraisal: about ${b.estimate} miles. They can spend at most ${b.budget}.${b.loves?.length ? ` They collect: ${b.loves.join(', ')}.` : ''}${b.peeked ? ` SECRET: they cheated and peeked inside the sealed pouches; the bag is really worth about ${b.peeked}. They never admit it out loud, but their private thought may slip.` : ''}`
+        : '';
       return `- ${r.sub}: ${r.name}, ${r.title}. Voice: ${r.voice}.${know}`;
     })
     .join('\n');
@@ -185,11 +188,11 @@ export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'th
       {
         role: 'system',
         content:
-          'You play the rival bidders at a lost-luggage auction game. For each rival, decide how hard they go after this bag from what the X-ray shows, their appraisal, their budget and their personality, then write their one-liners. Stance is one of: pass, careful, fair, keen, chase. "thought" is their private reasoning, under 14 words. Lines are under 9 words, in character, PG, no emoji, never mention real brands. Reply with JSON only.',
+          'You play the rival bidders at a lost-luggage auction game. For each rival, decide how hard they go after this bag from what the X-ray shows, their appraisal, their budget and their personality, then write their one-liners. Stance is one of: pass, careful, fair, keen, chase. "thought" is their private reasoning, under 14 words. "open", "raise", "fold" and "win" are spoken one-liners for opening the bidding, raising, giving up and winning, with no numbers or prices in them (the game shows the price); each under 9 words, in character, PG, no emoji, never mention real brands. Reply with JSON only.',
       },
       {
         role: 'user',
-        content: `The X-ray of the bag shows: ${xray}\nThe human bidder is called ${player}.${memory ? ` History: ${memory}. Let it show in their lines.` : ''}\nRivals:\n${people}\nReturn {"<sub>": {"stance": "...", "thought": "...", "open": "...", "raise": "...", "fold": "...", "win": "..."}} for every rival sub above.`,
+        content: `The X-ray of the bag shows: ${xray}\n${table.headless ? 'No human is at this table: the rivals bid only against each other.' : `The human bidder is called ${player}.`}${memory ? ` History: ${memory}. Let it show in their lines.` : ''}${table.gossip ? ` Floor gossip: ${table.gossip}.` : ''}\nRivals:\n${people}\n${table.teamUps ? 'A rival may secretly team up with one other rival at this table to beat the human: set "ally" to that rival\'s sub, or null. Allies never bid against each other. Team up only when it suits their personality and the bag.\n' : ''}Return {"<sub>": {"stance": "...", "thought": "...",${table.teamUps ? ' "ally": null,' : ''} "open": "...", "raise": "...", "fold": "...", "win": "..."}} for every rival sub above.`,
       },
     ],
   });
@@ -211,7 +214,8 @@ export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'th
     const minds: Record<string, Mind> = {};
     for (const r of lineup) {
       const l = json[r.sub] ?? {};
-      const clean = (s: unknown, d: string) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, 70) : d);
+      // A usable line has words in it; a bare number or price is not something a rival says.
+      const clean = (s: unknown, d: string) => (typeof s === 'string' && /[a-z]{2}/i.test(s) && !/\d/.test(s) ? s.trim().slice(0, 70) : d);
       lines[r.sub] = {
         open: clean(l.open, fallback[r.sub].open),
         raise: clean(l.raise, fallback[r.sub].raise),
@@ -219,7 +223,8 @@ export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'th
         win: clean(l.win, fallback[r.sub].win),
       };
       const stance = String(l.stance ?? '').toLowerCase().trim();
-      if (stance in STANCES) minds[r.sub] = { stance: stance as Stance, thought: clean(l.thought, '').slice(0, 90) };
+      const ally = typeof l.ally === 'string' && l.ally !== r.sub && lineup.some((x) => x.sub === l.ally) ? l.ally : undefined;
+      if (Object.hasOwn(STANCES, stance)) minds[r.sub] = { stance: stance as Stance, thought: clean(l.thought, '').slice(0, 90), ally };
     }
     const voiced: Voiced = { source: 'near-ai', lines, minds, completionId: data.id };
     // Verification runs while the lines are already in use; the result goes on the lot record.

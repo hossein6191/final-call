@@ -115,7 +115,8 @@ export function arrivals(root: HTMLElement) {
     const who = (acc: string) => b.people.find((p: any) => p.account === acc)?.name ?? acc.split('.')[0];
     const lines: string[] = [];
     for (const e of b.feed.slice(0, 14)) {
-      if (e.kind === 'lot' && e.winner) lines.push(`${who(e.winner)} wins lot ${String(e.id).slice(-4)} for ${fmt(e.price)} MI`);
+      if (e.kind === 'lot' && e.winner) lines.push(`${who(e.winner)} wins lot ${String(e.id).slice(-4)} for ${fmt(e.price)} MI${e.solo ? ' against rivals only' : ''}`);
+      if (e.kind === 'banned') lines.push(`CAUGHT: ${who(`${e.rival}.${c}`)} peeked inside a bag. Banned by ${e.by}`);
       if (e.kind === 'rival_sold') lines.push(`${who(`${e.rival}.${c}`)} dumps a bag on the dealer for ${fmt(e.total)}`);
       if (e.kind === 'grounded') lines.push(`BREAKING: ${who(`${e.rival}.${c}`)} is broke and grounded`);
       if (e.kind === 'loan') lines.push(`The House bails out ${who(`${e.rival}.${c}`)} with ${fmt(e.amount)} MI`);

@@ -7,6 +7,7 @@ import { iconSvg } from '../icons.ts';
 import { sound, buzz, tension } from '../audio.ts';
 import { coach, coachOff, coachActive } from '../ui/coach.ts';
 import { track } from '../ui/progress.ts';
+import { AVATARS } from '../avatars.ts';
 
 async function sha256hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -55,15 +56,54 @@ const STANCE_LABEL: Record<string, string> = { pass: 'PASS', careful: 'CAREFUL',
 
 /** What each rival decided before bidding, as NEAR AI wrote it, next to the cap it led to. */
 function minds(m: any) {
-  const list = (m.rivals ?? []).filter((r: any) => r.thought);
-  if (!list.length) return '';
+  const list = (m.rivals ?? []).filter((r: any) => r.thought || r.ally);
+  const real = (m.items ?? []).reduce((t: number, it: any) => t + valueOf(it.id, it.cond), 0);
+  const report = m.reportable
+    ? `<div class="report" id="report"><button class="btn ghost" id="rpt">🚩 REPORT A CHEATER</button><small>Did a rival bid like they had seen inside? Accuse one. If you are right, they are banned from the floor.</small></div>`
+    : '';
+  if (!list.length && !report) return '';
   return `<div class="panel minds"><div class="section-title" style="margin:0">WHAT THEY WERE THINKING · NEAR AI</div>
+    ${list.length ? `<div class="small muted">Real value of this bag: <b>${fmt(real)} MI</b>. Compare each rival's guess.</div>` : ''}
     ${list
       .map((r: any) => {
         const def = state.cfg!.rivals.find((d) => d.account === r.account);
-        return `<div class="mind"><b style="color:${def?.color ?? '#fff'}">${esc(r.name)}</b><span class="stance s-${esc(r.stance)}">${STANCE_LABEL[r.stance] ?? ''}</span><i>“${esc(r.thought)}”</i><small>would go to ${fmt(r.max)} MI</small></div>`;
+        return `<div class="mind"><b style="color:${def?.color ?? '#fff'}">${esc(r.name)}</b>${r.stance ? `<span class="stance s-${esc(r.stance)}">${STANCE_LABEL[r.stance] ?? ''}</span>` : '<span></span>'}${r.thought ? `<i>“${esc(r.thought)}”</i>` : ''}<small>guessed ${fmt(r.estimate)} · would go to ${fmt(r.max)} MI${r.ally ? ` · 🤝 teamed up with ${esc(r.ally)} against you` : ''}</small></div>`;
+      })
+      .join('')}
+    ${report}</div>`;
+}
+
+/** The accusation: pick a rival, the table weighs in, a cheater gets banned. */
+function wireReport(el: HTMLElement, m: any) {
+  const box = el.querySelector('#report') as HTMLElement | null;
+  if (!box) return;
+  (box.querySelector('#rpt') as HTMLButtonElement).onclick = () => {
+    sound.tap();
+    box.innerHTML = `<div class="small"><b>Who peeked?</b></div><div class="rpt-pick">${(m.rivals ?? [])
+      .map((r: any) => {
+        const def = state.cfg!.rivals.find((d) => d.account === r.account);
+        return `<button class="btn ghost" data-acc="${esc(r.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<span>${esc(r.name)}</span></button>`;
       })
       .join('')}</div>`;
+    box.querySelectorAll<HTMLButtonElement>('.rpt-pick button').forEach(
+      (b) =>
+        (b.onclick = async () => {
+          box.querySelectorAll('button').forEach((x) => ((x as HTMLButtonElement).disabled = true));
+          try {
+            const v = await api('/report', { lotId: m.lotId, rival: b.dataset.acc, account: state.id!.account });
+            if (v.guilty) {
+              sound.jackpot();
+              track('catch');
+            } else tension.deflate();
+            box.innerHTML = `<div class="verdict ${v.guilty ? 'guilty' : ''}"><div class="stamp ${v.guilty ? 'win' : ''}">${v.guilty ? 'BANNED' : 'NOT GUILTY'}</div>
+              <b>${v.guilty ? `You caught ${esc(v.rival)} peeking inside the bag. Banned from the floor for 6 hours.` : `${esc(v.rival)} played it straight this time.`}</b>
+              ${(v.voices ?? []).map((x: any) => `<div class="small"><b>${esc(x.name)}:</b> “${esc(x.line)}”</div>`).join('')}</div>`;
+          } catch (e) {
+            box.innerHTML = `<div class="small muted">${esc((e as Error).message)}</div>`;
+          }
+        }),
+    );
+  };
 }
 
 export function showSold(m: any) {
@@ -107,6 +147,7 @@ export function showSold(m: any) {
     go(hash);
   };
   ($('#next', el) as HTMLButtonElement).onclick = () => close('#next');
+  wireReport(el, m);
   ($('#tobags', el) as HTMLButtonElement).onclick = () => close('#bags');
 
   // ---- local tag check ----

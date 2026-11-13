@@ -18,7 +18,8 @@ function ago(ts: number) {
 function feedLine(e: any, people: any[]) {
   const c = state.cfg!.contract;
   const who = (acc: string) => esc(people.find((p) => p.account === acc)?.name ?? acc.split('.')[0]);
-  if (e.kind === 'lot') return e.winner ? `<b>${esc(e.name ?? who(e.winner))}</b> won a bag for ${fmt(e.price)}` : 'A bag went unsold';
+  if (e.kind === 'lot') return e.winner ? `<b>${esc(e.name ?? who(e.winner))}</b> won a bag for ${fmt(e.price)}${e.solo ? ' (rivals only)' : ''}` : 'A bag went unsold';
+  if (e.kind === 'banned') return `🚩 <b>${esc(e.by)}</b> got <b>${who(`${e.rival}.${c}`)}</b> banned for cheating`;
   if (e.kind === 'rival_sold') return `<b>${who(`${e.rival}.${c}`)}</b> sold to the dealer for ${fmt(e.total)}`;
   if (e.kind === 'grounded') return `<b>${who(`${e.rival}.${c}`)}</b> went broke and is grounded`;
   if (e.kind === 'loan') return `The House lent <b>${who(`${e.rival}.${c}`)}</b> ${fmt(e.amount)}`;
@@ -70,7 +71,7 @@ export function mountSide(el: HTMLElement | null, kind: 'floor' | 'table'): () =
       .filter((p: any) => p.rival)
       .map((p: any) => {
         const def = state.cfg!.rivals.find((r) => r.account === p.account);
-        return `<button class="sf ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<div class="grow"><b style="color:${def?.color}">${esc(p.name)}</b><small>${esc(def?.title ?? '')}</small></div><div class="sf-m">${p.miles < 100 ? '<span class="back-me">BACK ME</span>' : p.grounded ? '<span class="trend-down">GROUNDED</span>' : `${fmt(p.miles)}<small>MI</small>`}</div></button>`;
+        return `<button class="sf ${p.grounded ? 'grounded' : ''}" data-acc="${esc(p.account)}">${AVATARS[def?.sub ?? ''] ?? ''}<div class="grow"><b style="color:${def?.color}">${esc(p.name)}</b><small>${esc(def?.title ?? '')}</small></div><div class="sf-m">${p.banned ? '<span class="banned-tag">BANNED</span>' : p.miles < 100 ? '<span class="back-me">BACK ME</span>' : p.grounded ? '<span class="trend-down">GROUNDED</span>' : `${fmt(p.miles)}<small>MI</small>`}</div></button>`;
       })
       .join('');
     el.querySelectorAll<HTMLButtonElement>('.sf').forEach((x) => (x.onclick = () => rivalSheet(x.dataset.acc!, b)));

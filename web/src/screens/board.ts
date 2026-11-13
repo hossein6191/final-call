@@ -75,9 +75,10 @@ export function board(root: HTMLElement) {
     $('#feed', root).innerHTML = b.feed
       .map((e: any) => {
         let text = '';
-        if (e.kind === 'lot') text = e.winner ? `<b>${esc(e.name ?? nameOf(b.people, e.winner))}</b> won lot ${e.id} for ${fmt(e.price)} MI` : `Lot ${e.id} went unsold`;
+        if (e.kind === 'lot') text = e.winner ? `<b>${esc(e.name ?? nameOf(b.people, e.winner))}</b> won lot ${e.id} for ${fmt(e.price)} MI${e.solo ? ' · <span class="solo">rivals only, no human</span>' : ''}` : `Lot ${e.id} went unsold`;
+        else if (e.kind === 'banned') text = `🚩 <b>${esc(e.by)}</b> caught <b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> peeking inside lot ${e.lot}: banned from the floor for 6 hours`;
         else if (e.kind === 'rival_sold') text = `<b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> sold lot ${e.lot}'s goods to the dealer for ${fmt(e.total)} MI`;
-        else if (e.kind === 'grounded') text = `<b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> is broke and grounded for 30 minutes`;
+        else if (e.kind === 'grounded') text = `<b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> is broke and grounded until someone backs them`;
         else if (e.kind === 'backed') text = `<b>${esc(e.name)}</b> backed <b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> with ${fmt(e.amount)} MI and reopened their shop`;
         else if (e.kind === 'player_loan') text = `<b>${esc(nameOf(b.people, e.account))}</b> took an emergency loan from the House`;
         else if (e.kind === 'loan') text = `The House lent <b>${esc(nameOf(b.people, `${e.rival}.${c}`))}</b> ${fmt(e.amount)} MI`;

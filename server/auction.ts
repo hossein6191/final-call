@@ -3,11 +3,11 @@
 // and the winner pays with their own key.
 import { AUCTION, increment, itemValue, parseItemToken, publicEstimate, type ManifestSlot } from '../shared/rules.ts';
 import { ITEM_BY_ID } from '../shared/catalog.ts';
-import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, type BagRow } from './db.ts';
+import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, saveTable, type BagRow } from './db.ts';
 import { house, panicMessage, rival as rivalTx, txUrl, view } from './chain.ts';
 import { voiceRivals, scriptedLines, STANCES, type Voiced, type Mind, type Brief } from './ai.ts';
 import { Voice, type Moment } from './banter.ts';
-import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
+import { planFor, rivalWon, freeMiles, lastBan, type RivalState } from './rivals.ts';
 
 // 1.2 s for the bag to roll into the X-ray tunnel, then 6 s of scanning.
 export const ARRIVE_MS = 1200;
@@ -16,6 +16,22 @@ export const SCAN_MS = ARRIVE_MS + 6000;
 /** Difficulty the player picked: scales every rival's cap on the bag. */
 export const LEVELS = { easy: 0.82, normal: 1, hard: 1.15 } as const;
 export type Level = keyof typeof LEVELS;
+
+/** What else a level changes: the odds of a secret cheater, of rival powers firing, of team-ups. */
+export const TWISTS: Record<Level, { cheat: number; power: number; teamUps: boolean }> = {
+  easy: { cheat: 0, power: 0, teamUps: false },
+  normal: { cheat: 0.2, power: 0.35, teamUps: true },
+  hard: { cheat: 0.45, power: 0.7, teamUps: true },
+};
+
+/** Each of these rivals has one trick it can pull once per bag. */
+export const POWERS: Record<string, { kind: 'blackout' | 'rain' | 'fog'; name: string; text: string }> = {
+  dash: { kind: 'blackout', name: 'Lights out', text: 'can black out your screen for 2 seconds' },
+  bigsal: { kind: 'rain', name: 'Make it rain', text: 'can throw a sudden huge jump bid' },
+  odo: { kind: 'fog', name: 'Lecture', text: 'can fog your X-ray while he talks' },
+};
+const BLACKOUT_MS = 2000;
+const FOG_MS = 1800;
 const TICK_MS = 100;
 
 export type Send = (msg: object) => void;
@@ -36,6 +52,10 @@ interface Seat {
   voice?: Voice;
   /** Cap from the rival's own appraisal, before NEAR AI picks a stance. */
   baseMax?: number;
+  /** Secretly peeked inside the sealed pouches. */
+  cheat?: boolean;
+  /** Teamed up with this rival against the player. */
+  ally?: Seat;
   /** Most the rival may commit to this bag, from its wallet. */
   budget?: number;
   mind?: Mind;
@@ -78,12 +98,17 @@ export class Auction {
   private saidHeat = false;
   private saidDuel = false;
   private playerHasBid = false;
+  /** A table with no human: rivals bid only against each other. */
+  readonly ghost: boolean;
+  private powers = new Set<string>();
+  private blackoutUntil = 0;
+  private teamUps = false;
   private send: Send;
   private onDone: (r: AuctionResult) => void;
 
   constructor(
     bag: BagRow,
-    player: { account: string; nickname: string; miles: number; level?: Level },
+    player: { account: string; nickname: string; miles: number; level?: Level; ghost?: boolean },
     lineup: RivalState[],
     send: Send,
     onDone: (r: AuctionResult) => void,
@@ -95,21 +120,42 @@ export class Auction {
     this.playerMiles = player.miles;
     this.player = { id: player.account, name: player.nickname, max: 0, estimate: 0, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: 0 };
     this.seats = [this.player];
+    this.ghost = Boolean(player.ghost);
+    if (this.ghost) this.player.folded = true;
     const tutorial = Boolean(bag.reserved_for);
     this.tutorial = tutorial;
     this.level = player.level && Object.hasOwn(LEVELS, player.level) ? player.level : 'normal';
+    const twists = this.ghost || tutorial ? TWISTS.easy : TWISTS[this.level];
     for (const r of tutorial ? lineup.slice(0, 2) : lineup) {
       const budget = Math.floor(freeMiles(r) * Math.min(0.85, r.def.walletShare * 1.5));
       const plan = planFor(r, this.manifest, bag.tier);
       // The first bag teaches the payoff: two rivals who give up around half its value.
       if (tutorial) plan.max = Math.min(plan.max, Math.floor((publicEstimate(this.manifest, bag.tier) * 0.3) / 10) * 10);
       // Grudges: a rival you keep beating pushes 10% harder against you.
-      const mem = rivalryOf(player.account, r.account);
+      const mem = this.ghost ? { player_wins: 0, rival_wins: 0 } : rivalryOf(player.account, r.account);
       if (!tutorial && mem.player_wins >= 2) plan.max = Math.floor((plan.max * 1.1) / 10) * 10;
-      if (!tutorial) plan.max = Math.min(budget, Math.floor((plan.max * LEVELS[this.level]) / 10) * 10);
+      if (!tutorial && !this.ghost) plan.max = Math.min(budget, Math.floor((plan.max * LEVELS[this.level]) / 10) * 10);
       r.committed += plan.max;
       this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: mem.player_wins, baseMax: plan.max, budget });
     }
+    // One rival may secretly peek inside the bag: it bids on the real contents, not the X-ray.
+    const rivalSeats = this.seats.filter((x) => x.rival);
+    if (rivalSeats.length >= 2 && Math.random() < twists.cheat) {
+      const c = rivalSeats[Math.floor(Math.random() * rivalSeats.length)];
+      const real = (JSON.parse(bag.items) as string[]).map(parseItemToken).reduce((t, it) => t + itemValue(it), 0);
+      c.cheat = true;
+      const before = c.max;
+      c.estimate = Math.round(real * (0.96 + Math.random() * 0.08));
+      const step = real >= 1000 ? 50 : 10;
+      c.max = c.baseMax = Math.max(0, Math.floor(Math.min(c.budget ?? c.max, real * (0.82 + Math.random() * 0.13)) / step) * step);
+      c.rival!.committed += c.max - before;
+    }
+    for (const x of rivalSeats) {
+      const pw = POWERS[x.rival!.def.sub];
+      if (pw && Math.random() < twists.power) this.powers.add(pw.kind);
+    }
+    this.teamUps = twists.teamUps;
+    if (!this.ghost && !tutorial) saveTable(bag.id, player.account, rivalSeats.find((x) => x.cheat)?.id ?? null);
     this.voiced = { source: 'scripted', lines: scriptedLines(lineup.map((r) => r.def), player.nickname) };
     for (const s of this.rivals) s.voice = new Voice(s.rival!.def, this.voiced.lines[s.rival!.def.sub]);
     const seen = this.manifest.filter((m) => !m.pouch && m.id).map((m) => ITEM_BY_ID[m.id!].name);
@@ -128,7 +174,7 @@ export class Auction {
   start() {
     const lineup = this.rivals.map((s) => s.rival!.def);
     // Ask NEAR AI for the rivals' lines during the scan; scripted lines cover any delay.
-    const memory = this.rivals
+    const memory = this.ghost ? '' : this.rivals
       .map((s) => {
         const m = rivalryOf(this.player.id, s.id);
         if (m.player_wins) return `${s.rival!.def.sub} has lost ${m.player_wins} bag(s) to ${this.player.name} and holds a grudge`;
@@ -138,9 +184,11 @@ export class Auction {
       .filter(Boolean)
       .join('; ');
     const briefs: Record<string, Brief> = Object.fromEntries(
-      this.rivals.map((s) => [s.rival!.def.sub, { estimate: s.estimate, budget: s.budget ?? s.max, loves: s.rival!.def.loves }]),
+      this.rivals.map((s) => [s.rival!.def.sub, { estimate: s.estimate, budget: s.budget ?? s.max, loves: s.rival!.def.loves, peeked: s.cheat ? s.estimate : undefined }]),
     );
-    voiceRivals(lineup, xrayText(this.manifest), this.player.name, memory, briefs).then((v) => {
+    const ban = lastBan && Date.now() - lastBan.at < 12 * 3600 * 1000 ? lastBan : null;
+    const gossip = ban ? `${ban.name} was caught peeking inside sealed bags and banned from the floor` : '';
+    voiceRivals(lineup, xrayText(this.manifest), this.player.name, memory, briefs, { headless: this.ghost, teamUps: this.teamUps, gossip }).then((v) => {
       this.voiced = v;
       for (const s of this.rivals) s.voice?.setAi(v.lines[s.rival!.def.sub]);
       this.applyMinds(v.minds);
@@ -170,7 +218,17 @@ export class Auction {
       you: { miles: this.playerMiles },
       tutorial: Boolean(this.bag.reserved_for),
       level: this.tutorial ? 'normal' : this.level,
+      // The host's warning: who is at the table, what tricks they may pull, and whether a cheat is possible.
+      table: this.tutorial ? null : {
+        rivals: this.rivals.map((s) => ({ sub: s.rival!.def.sub, name: s.name, power: POWERS[s.rival!.def.sub] ? { name: POWERS[s.rival!.def.sub].name, text: POWERS[s.rival!.def.sub].text } : null })),
+        cheatRisk: TWISTS[this.level].cheat,
+        teamUps: this.teamUps,
+      },
     });
+    if (this.powers.has('fog')) {
+      const odo = this.rivals.find((x) => POWERS[x.rival!.def.sub]?.kind === 'fog');
+      if (odo) setTimeout(() => this.phase === 'scan' && this.send({ type: 'power', kind: 'fog', by: odo.id, name: odo.name, ms: FOG_MS, line: 'Allow me to explain this bag. At length.' }), ARRIVE_MS + 1600);
+    }
     setTimeout(() => this.goLive(), this.scanMs());
   }
 
@@ -225,6 +283,12 @@ export class Auction {
       else line = this.talk(s, 'raise', { chance: 0.3 });
     }
     this.send({ type: 'auction:bid', by: s.id, name: s.name, price: amount, jump, line, next: this.nextPrice(), heat: this.heat(), snipe, war: this.war, outbid: prevLeader?.id ?? null });
+    // Lights out: Dash cuts the lights right after his bid, once, if the player is in the game.
+    if (s.rival && this.powers.has('blackout') && POWERS[s.rival.def.sub]?.kind === 'blackout' && this.playerHasBid && !this.player.folded) {
+      this.powers.delete('blackout');
+      this.blackoutUntil = Date.now() + BLACKOUT_MS;
+      this.send({ type: 'power', kind: 'blackout', by: s.id, name: s.name, ms: BLACKOUT_MS, line: 'Oops. Who turned off the lights?' });
+    }
     // A bluffer caught by a jump often folds.
     if (jump && prevLeader?.rival?.def.style === 'bluffer' && Math.random() < 0.6) this.fold(prevLeader);
   }
@@ -245,12 +309,32 @@ export class Auction {
     for (const s of this.rivals) {
       const m = minds[s.rival!.def.sub];
       if (!m || s.folded) continue;
-      const step = s.baseMax! >= 1000 ? 50 : 10;
-      const next = Math.max(0, Math.floor(Math.min(s.baseMax! * STANCES[m.stance], s.budget ?? s.baseMax!) / step) * step);
-      s.rival!.committed += next - s.max;
-      s.max = next;
       s.mind = m;
+      // A cheater already bids on what is really inside; the stance only colours its lines.
+      if (!s.cheat) {
+        const step = s.baseMax! >= 1000 ? 50 : 10;
+        const next = Math.max(0, Math.floor(Math.min(s.baseMax! * STANCES[m.stance], s.budget ?? s.baseMax!) / step) * step);
+        s.rival!.committed += next - s.max;
+        s.max = next;
+      }
       out.push({ account: s.id, sub: s.rival!.def.sub, stance: m.stance });
+    }
+    // One secret team-up against the player: the pair never outbid each other, and the
+    // stronger partner adds part of the other's wallet to its cap.
+    if (this.teamUps && !this.ghost) {
+      for (const s of this.rivals) {
+        const sub = s.mind?.ally;
+        const b = sub ? this.rivals.find((x) => x.rival!.def.sub === sub) : undefined;
+        if (!b || b === s || s.ally || b.ally || s.folded || b.folded) continue;
+        s.ally = b;
+        b.ally = s;
+        const [hi, lo] = s.max >= b.max ? [s, b] : [b, s];
+        const add = Math.floor((lo.max * 0.15) / 10) * 10;
+        const next = Math.min(hi.budget ?? hi.max, hi.max + add);
+        hi.rival!.committed += next - hi.max;
+        hi.max = next;
+        break;
+      }
     }
     if (!out.length) return;
     setBag(this.bag.id, { rivals: JSON.stringify(this.rivalsRecord()) });
@@ -258,7 +342,7 @@ export class Auction {
   }
 
   private rivalsRecord() {
-    return this.rivals.map((s) => ({ account: s.id, name: s.name, estimate: s.estimate, max: s.max, folded: s.folded, stance: s.mind?.stance ?? null, thought: s.mind?.thought ?? null }));
+    return this.rivals.map((s) => ({ account: s.id, name: s.name, estimate: s.estimate, max: s.max, folded: s.folded, stance: s.mind?.stance ?? null, thought: s.mind?.thought ?? null, ally: s.ally?.name ?? null }));
   }
 
   private scanMs() {
@@ -266,7 +350,11 @@ export class Auction {
   }
 
   playerBid(kind: 'bid' | 'jump') {
-    if (this.phase !== 'live' || this.leader === this.player) return;
+    if (this.phase !== 'live' || this.leader === this.player || this.ghost) return;
+    if (Date.now() < this.blackoutUntil) {
+      this.send({ type: 'auction:refused', reason: 'Lights out! You cannot bid in the dark.' });
+      return;
+    }
     const amount = kind === 'jump' ? this.jumpPrice() : this.nextPrice();
     if (amount > this.playerMiles) {
       this.send({ type: 'auction:refused', reason: 'Not enough miles for that bid.' });
@@ -349,6 +437,7 @@ export class Auction {
 
     for (const s of this.rivals) {
       if (s.folded || s === this.leader) continue;
+      if (s.ally && this.leader === s.ally) continue; // never outbid a partner
       const next = this.nextPrice();
       // Whale ego: Big Sal pushes 10% harder when a human holds the lead.
       const ego = s.rival!.def.style === 'whale' && this.leader === this.player ? 1.1 : 1;
@@ -371,6 +460,18 @@ export class Auction {
         this.send({ type: 'auction:twitch', by: s.id });
       } else if (now >= s.planAt) {
         let amount = next;
+        // Make it rain: Big Sal answers the player with one huge jump.
+        if (this.powers.has('rain') && POWERS[s.rival!.def.sub]?.kind === 'rain' && this.leader === this.player && next < 0.6 * ceiling) {
+          const step = increment(this.price, this.heat());
+          const big = Math.floor(Math.min(ceiling, this.price + 5 * step) / step) * step;
+          if (big > next) {
+            this.powers.delete('rain');
+            this.send({ type: 'power', kind: 'rain', by: s.id, name: s.name, ms: 1600, line: 'Money talks. Mine shouts.' });
+            s.jumped = true;
+            this.accept(s, big, true);
+            return;
+          }
+        }
         if (s.planJump) {
           const j = this.jumpPrice();
           if (j <= ceiling) {
@@ -410,8 +511,9 @@ export class Auction {
       salt: this.bag.salt,
       commitment: this.bag.commitment,
       rivals: this.rivalsRecord(),
+      reportable: !this.ghost && !this.tutorial && this.level !== 'easy',
     });
-    for (const s of this.rivals) {
+    for (const s of this.ghost ? [] : this.rivals) {
       if (winner === this.player) bumpRivalry(this.player.id, s.id, true);
       else if (winner === s) bumpRivalry(this.player.id, s.id, false);
     }
@@ -448,7 +550,7 @@ export class Auction {
       const tx = await house('close_lot', { id, winner: winner?.id ?? null, price: winner ? this.price : 0, items, salt: this.bag.salt });
       setBag(id, { closed_tx: tx.hash, status: winner ? 'awaiting_payment' : 'unsold' });
       this.send({ type: 'lot:revealed', lotId: id, tx: tx.hash, url: txUrl(tx.hash) });
-      addFeed('lot', { id, tier: this.bag.tier, winner: winner?.id ?? null, name: winner?.name ?? null, price: winner ? this.price : 0, tx: tx.hash });
+      addFeed('lot', { id, tier: this.bag.tier, winner: winner?.id ?? null, name: winner?.name ?? null, price: winner ? this.price : 0, tx: tx.hash, solo: this.ghost || undefined });
       if (winner === this.player) void this.collectorsWant(items);
       if (winner?.rival) {
         const price = this.price;
