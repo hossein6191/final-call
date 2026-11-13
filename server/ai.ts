@@ -1,5 +1,6 @@
-// Rival voices from NEAR AI Cloud (a model running in a TEE), with the response signature
-// checked here. The model only writes lines; bids and money are decided by code.
+// Rival minds and voices from NEAR AI Cloud (a model running in a TEE), with the response
+// signature checked here. The model picks each rival's stance on the bag and writes its lines;
+// code turns the stance into a bid cap and still enforces the rival's wallet limits.
 import { createHash, randomBytes } from 'node:crypto';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -30,9 +31,17 @@ export interface Verification {
   verifyUrl: string;
 }
 
+export const STANCES = { pass: 0.6, careful: 0.85, fair: 1, keen: 1.12, chase: 1.25 } as const;
+export type Stance = keyof typeof STANCES;
+export interface Mind { stance: Stance; thought: string }
+/** What a rival knows before it decides: its own appraisal and how much it may spend. */
+export interface Brief { estimate: number; budget: number; loves?: string[] }
+
 export interface Voiced {
   source: 'near-ai' | 'scripted';
   lines: Record<string, Lines>;
+  /** The stance NEAR AI chose for each rival (absent on scripted runs). */
+  minds?: Record<string, Mind>;
   completionId?: string;
   /** Resolves once the TEE signature has been checked (the lines are usable before that). */
   verification?: Promise<Verification | null>;
@@ -158,23 +167,29 @@ export async function verifyCompletion(id: string, model: string, requestBody: s
  * Asks NEAR AI for every rival's lines in one call. The prompt only contains what the X-ray
  * shows, never the sealed contents, so the request hash proves the rivals bid blind.
  */
-export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'the newcomer', memory = ''): Promise<Voiced> {
+export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'the newcomer', memory = '', briefs: Record<string, Brief> = {}): Promise<Voiced> {
   if (!cfg.nearAiKey) return { source: 'scripted', lines: scriptedLines(lineup, player, memory), error: 'no NEAR AI key' };
-  const people = lineup.map((r) => `- ${r.sub}: ${r.name}, ${r.title}. Voice: ${r.voice}.`).join('\n');
+  const people = lineup
+    .map((r) => {
+      const b = briefs[r.sub];
+      const know = b ? ` Their own appraisal: about ${b.estimate} miles. They can spend at most ${b.budget}.${b.loves?.length ? ` They collect: ${b.loves.join(', ')}.` : ''}` : '';
+      return `- ${r.sub}: ${r.name}, ${r.title}. Voice: ${r.voice}.${know}`;
+    })
+    .join('\n');
   const body = JSON.stringify({
     model: cfg.nearAiModel,
-    max_tokens: 400,
+    max_tokens: 900,
     temperature: 0.9,
     reasoning_effort: 'low',
     messages: [
       {
         role: 'system',
         content:
-          'You write one-liners for rival bidders at a lost-luggage auction game. Each line is under 9 words, in character, PG, no emoji, never mention real brands. Reply with JSON only.',
+          'You play the rival bidders at a lost-luggage auction game. For each rival, decide how hard they go after this bag from what the X-ray shows, their appraisal, their budget and their personality, then write their one-liners. Stance is one of: pass, careful, fair, keen, chase. "thought" is their private reasoning, under 14 words. Lines are under 9 words, in character, PG, no emoji, never mention real brands. Reply with JSON only.',
       },
       {
         role: 'user',
-        content: `The X-ray of the bag shows: ${xray}\nThe human bidder is called ${player}.${memory ? ` History: ${memory}. Let it show in their lines.` : ''}\nRivals:\n${people}\nReturn {"<sub>": {"open": "...", "raise": "...", "fold": "...", "win": "..."}} for every rival sub above.`,
+        content: `The X-ray of the bag shows: ${xray}\nThe human bidder is called ${player}.${memory ? ` History: ${memory}. Let it show in their lines.` : ''}\nRivals:\n${people}\nReturn {"<sub>": {"stance": "...", "thought": "...", "open": "...", "raise": "...", "fold": "...", "win": "..."}} for every rival sub above.`,
       },
     ],
   });
@@ -193,6 +208,7 @@ export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'th
     const json = JSON.parse(content.slice(content.indexOf('{'), content.lastIndexOf('}') + 1));
     const fallback = scriptedLines(lineup);
     const lines: Record<string, Lines> = {};
+    const minds: Record<string, Mind> = {};
     for (const r of lineup) {
       const l = json[r.sub] ?? {};
       const clean = (s: unknown, d: string) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, 70) : d);
@@ -202,8 +218,10 @@ export async function voiceRivals(lineup: RivalDef[], xray: string, player = 'th
         fold: clean(l.fold, fallback[r.sub].fold),
         win: clean(l.win, fallback[r.sub].win),
       };
+      const stance = String(l.stance ?? '').toLowerCase().trim();
+      if (stance in STANCES) minds[r.sub] = { stance: stance as Stance, thought: clean(l.thought, '').slice(0, 90) };
     }
-    const voiced: Voiced = { source: 'near-ai', lines, completionId: data.id };
+    const voiced: Voiced = { source: 'near-ai', lines, minds, completionId: data.id };
     // Verification runs while the lines are already in use; the result goes on the lot record.
     voiced.verification = verifyCompletion(data.id, cfg.nearAiModel, body, text).catch((e) => {
       voiced.error = `verification failed: ${String(e.message ?? e).slice(0, 120)}`;

@@ -10,6 +10,7 @@ import { db, getBag, setBag, recentFeed, addFeed, type BagRow } from './db.ts';
 import { house, panicMessage, provider, txUrl, view } from './chain.ts';
 import { arrivals, claimBag, fillPool, sealTutorialBag, toPublic } from './bags.ts';
 import { Auction } from './auction.ts';
+import type { Level } from './auction.ts';
 import { economyTick, pickLineup, rivalWon, rivals, syncRival, syncRivals } from './rivals.ts';
 import { RIVALS } from '../shared/rivals.ts';
 import { ITEM_BY_ID, LADDER } from '../shared/catalog.ts';
@@ -372,7 +373,7 @@ wss.on('connection', (ws: WebSocket) => {
       }
       const st = streaks.get(account) ?? { losses: 0, wins: 0 };
       const lineup = pickLineup({ lossStreak: bag.reserved_for ? 3 : st.losses, dominant: st.wins >= 3, minMiles: bag.opening });
-      auction = new Auction(bag, { account, nickname, miles }, lineup, send, (r) => {
+      auction = new Auction(bag, { account, nickname, miles, level: typeof m.level === 'string' ? (m.level as Level) : undefined }, lineup, send, (r) => {
         const s = streaks.get(account!) ?? { losses: 0, wins: 0 };
         if (r.playerWon) streaks.set(account!, { losses: 0, wins: s.wins + 1 });
         else streaks.set(account!, { losses: s.losses + 1, wins: 0 });

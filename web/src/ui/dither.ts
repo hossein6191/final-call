@@ -166,3 +166,39 @@ export function mountDither(host: HTMLElement, o: DitherOpts): (() => void) | nu
     canvas.remove();
   };
 }
+
+/** One still frame of the shader at a given size, for exported images. Null without WebGL2. */
+export function ditherStill(w: number, h: number, o: DitherOpts, time = 3.2): HTMLCanvasElement | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
+  if (!gl) return null;
+  const vs = compile(gl, gl.VERTEX_SHADER, VERT);
+  const fs = compile(gl, gl.FRAGMENT_SHADER, FRAG);
+  if (!vs || !fs) return null;
+  const prog = gl.createProgram()!;
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  const U = (n: string) => gl.getUniformLocation(prog, n);
+  const ratio = 2;
+  gl.viewport(0, 0, w, h);
+  gl.uniform4fv(U('u_colorBack'), hex(o.back));
+  gl.uniform4fv(U('u_colorFront'), hex(o.front));
+  gl.uniform1f(U('u_shape'), o.shape === 'simplex' ? 1 : 2);
+  gl.uniform1f(U('u_pxSize'), o.size ?? 1);
+  gl.uniform1f(U('u_scale'), o.scale ?? 1);
+  gl.uniform1f(U('u_rotation'), o.rotation ?? 0);
+  gl.uniform2f(U('u_resolution'), w, h);
+  gl.uniform1f(U('u_pixelRatio'), ratio);
+  gl.uniform1f(U('u_time'), time);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  return canvas;
+}

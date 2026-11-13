@@ -6,6 +6,7 @@ import { TERMINALS } from '../../../shared/rules.ts';
 import { sound, unlock } from '../audio.ts';
 import { mountHourglass } from './hourglass.ts';
 import { nextTip } from './bits.ts';
+import { levelPicker, wireLevel } from './level.ts';
 
 const OFF = 'fc:brief-off';
 export const briefingOff = () => {
@@ -43,11 +44,14 @@ export function briefing(host: HTMLElement, lotId: number): Promise<void> {
           <div><i>2</i><div><b>Bid against AI rivals</b><span>Each bid restarts a 5-second clock: <em>going once</em> at 2 s, <em>going twice</em> at 3.5 s, <em>SOLD</em> at 5 s. After 25 s every step doubles. Rivals have real wallets and limits.</span></div></div>
           <div><i>3</i><div><b>Open it and sell</b><span>Win the bag, crack the pouches, then sell what is inside. Profit is what is inside minus what you paid.</span></div></div>
         </div>
+        <div class="section-title" style="margin:0">RIVALS</div>
+        ${levelPicker()}
         <div class="brief-tip">💡 ${esc(nextTip())}</div>
         <label class="brief-skip"><input type="checkbox" id="bskip"/> Don't show this before every bag</label>
         <button class="btn primary" id="bgo">START <span class="kbd">Space</span></button>
       </div>`;
     host.appendChild(el);
+    wireLevel(el, () => sound.tap());
     const stop = mountHourglass(el.querySelector('.brief-hg') as HTMLElement, 5, 46);
     void api(`/lot/${lotId}`)
       .then((b) => {

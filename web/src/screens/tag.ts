@@ -45,7 +45,7 @@ export function tag(root: HTMLElement, id: number) {
         <div class="panel verify">${rows.join('')}</div>
         <div class="section-title">INSIDE</div>
         <div class="items">${items.map((it: any) => `<div class="item in">${iconSvg(it.id)}<div class="nm">${esc(ITEM_BY_ID[it.id].name)}</div><div class="cond">${it.cond}${it.pouch ? ' · pouch' : ''}</div></div>`).join('')}</div>
-        ${lot.rivals ? `<div class="section-title">RIVALS' LIMITS (FROM THE X-RAY ONLY)</div><div class="panel small">${lot.rivals.map((r: any) => `${esc(r.name)}: estimate ${fmt(r.estimate)}, max ${fmt(r.max)}`).join('<br>')}</div>` : ''}
+        ${lot.rivals ? `<div class="section-title">RIVALS' LIMITS (FROM THE X-RAY ONLY)</div><div class="panel small">${lot.rivals.map((r: any) => `${esc(r.name)}: estimate ${fmt(r.estimate)}, max ${fmt(r.max)}${r.stance ? ` · NEAR AI stance <b>${esc(String(r.stance).toUpperCase())}</b>${r.thought ? ` · “${esc(r.thought)}”` : ''}` : ''}`).join('<br>')}</div>` : ''}
         ${lot.ai ? `<div class="section-title">RIVAL VOICES</div><div class="panel small">${lot.ai.source === 'near-ai' ? `Written by NEAR AI (${esc(lot.ai.verification?.model ?? '')}).` : 'Scripted lines.'} ${lot.ai.verification ? `${lot.ai.verification.ok ? '✅ Signed by the key NEAR AI reports for its TEE; request and response hashes match' : '⚠️ signature not confirmed'} · signer <span class="hash">${esc(lot.ai.verification.signingAddress ?? '')}</span> · <a href="${esc(lot.ai.verification.verifyUrl ?? '')}" target="_blank" rel="noopener">full attestation on NEAR AI</a>` : esc(lot.ai.error ?? '')}</div>` : ''}`;
     } else {
       rows.push(`<div class="line"><i>⏳</i><span>Not revealed yet. The contents and salt stay secret until the hammer falls.</span></div>`);

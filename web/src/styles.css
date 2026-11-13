@@ -849,3 +849,72 @@ kbd, .kbd { display: inline-block; font-family: var(--mono); font-size: 11px; pa
 @keyframes jolt { 30% { transform: scale(1.12); } }
 .face .steam { animation: steam .8s ease-out infinite; }
 @keyframes steam { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-3px); } }
+
+/* ---------- share pass ---------- */
+.share-sheet .sheet { max-width: 620px; margin: 0 auto; }
+.share-prev { aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; }
+.share-prev img { width: 100%; height: 100%; display: block; animation: fadein .3s; }
+
+/* ---------- NEAR AI stances ---------- */
+.rival .stance { position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); font: 700 10px/1 var(--mono); letter-spacing: .08em; padding: 3px 6px; border-radius: 6px; background: #1c2333; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; animation: pop .35s cubic-bezier(.3,1.6,.5,1) both; }
+.stance.s-chase { background: #4a1420; color: #ff8fa3; border-color: #a33a52; }
+.stance.s-keen { background: #3d2a0a; color: #ffd23f; border-color: #8f6b1a; }
+.stance.s-fair { background: #10283d; color: #8ec5ff; border-color: #2a5b86; }
+.stance.s-careful { background: #1f2a1a; color: #b6e3a0; border-color: #4b6b3c; }
+.stance.s-pass { background: #222631; color: #8b93a6; }
+.minds { display: flex; flex-direction: column; gap: 8px; }
+.mind { display: grid; grid-template-columns: auto auto 1fr; gap: 4px 8px; align-items: center; font-size: 14px; }
+.mind .stance { font: 700 10px/1 var(--mono); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); }
+.mind i { grid-column: 1 / -1; color: var(--text); }
+.mind small { grid-column: 1 / -1; color: var(--muted); }
+@keyframes stancepop { from { opacity: 0; transform: translateX(-50%) scale(.4); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+.rival .stance { animation-name: stancepop; }
+
+/* ---------- rival cameos ---------- */
+.cameo { position: fixed; bottom: calc(96px + var(--safe-b)); z-index: 18; display: flex; align-items: flex-end; gap: 8px; max-width: min(360px, calc(100vw - 24px)); background: none; border: 0; padding: 0; text-align: left; color: var(--text); cursor: pointer; }
+.cameo.left { left: 10px; animation: cameo-l .55s cubic-bezier(.2,1.4,.4,1) both; }
+.cameo.right { right: 10px; flex-direction: row-reverse; animation: cameo-r .55s cubic-bezier(.2,1.4,.4,1) both; }
+.cameo.left.out { animation: cameo-l-out .4s ease-in both; }
+.cameo.right.out { animation: cameo-r-out .4s ease-in both; }
+.cameo-av { width: 84px; height: 84px; flex: none; filter: drop-shadow(0 8px 16px rgba(0,0,0,.5)); }
+.cameo-av svg { width: 100%; height: 100%; }
+.cameo.left .cameo-av { animation: wiggle 1.6s ease-in-out .6s infinite; }
+.cameo.right .cameo-av { animation: wiggle 1.6s ease-in-out .6s infinite reverse; }
+.cameo-bub { position: relative; margin-bottom: 46px; background: #f4f1e8; color: #1b1f2a; font-size: 14px; line-height: 1.3; padding: 9px 12px; border-radius: 14px; box-shadow: 0 10px 24px rgba(0,0,0,.4); animation: bubin .35s .3s cubic-bezier(.2,1.6,.4,1) both; }
+.cameo-bub b { display: block; font-family: var(--display); font-size: 15px; letter-spacing: .04em; }
+.cameo.left .cameo-bub { border-bottom-left-radius: 4px; }
+.cameo.right .cameo-bub { border-bottom-right-radius: 4px; }
+@keyframes cameo-l { from { transform: translateX(-130%) rotate(-12deg); } to { transform: none; } }
+@keyframes cameo-r { from { transform: translateX(130%) rotate(12deg); } to { transform: none; } }
+@keyframes cameo-l-out { to { transform: translateX(-130%) rotate(-10deg); opacity: 0; } }
+@keyframes cameo-r-out { to { transform: translateX(130%) rotate(10deg); opacity: 0; } }
+@keyframes wiggle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-6deg); } 75% { transform: rotate(6deg); } }
+@keyframes bubin { from { opacity: 0; transform: scale(.6) translateY(10px); } to { opacity: 1; transform: none; } }
+@media (min-width: 1100px) { .cameo { bottom: 28px; } }
+@media (prefers-reduced-motion: reduce) { .cameo, .cameo-av, .cameo-bub { animation: none !important; } }
+
+
+/* ---------- difficulty ---------- */
+.level-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.level-pick button { display: flex; flex-direction: column; gap: 2px; padding: 9px 8px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); text-align: left; }
+.level-pick button b { font-family: var(--display); font-size: 17px; letter-spacing: .04em; color: var(--text); }
+.level-pick button small { font-size: 11px; line-height: 1.25; }
+.level-pick button.on { border-color: var(--sign); box-shadow: 0 0 0 1px var(--sign) inset; background: rgba(255,210,63,.08); }
+.set .level-pick { margin-top: 8px; }
+.chip.lv-easy { color: #b6e3a0; border-color: #4b6b3c; }
+.chip.lv-hard { color: #ff8fa3; border-color: #a33a52; }
+
+/* ---------- guard & hall peek ---------- */
+.locked.guard { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.guard-face { width: 64px; height: 64px; }
+.locked.guard .guard-face { animation: wiggle 2.4s ease-in-out infinite; }
+.peek { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+.peek-guard { display: flex; align-items: flex-end; gap: 8px; }
+.peek-guard .guard-face { flex: none; animation: hop .6s cubic-bezier(.2,1.6,.4,1); }
+.peek-bub { background: #f4f1e8; color: #1b1f2a; font-size: 14px; padding: 9px 12px; border-radius: 14px 14px 14px 4px; animation: bubin .35s .2s cubic-bezier(.2,1.6,.4,1) both; }
+.peek-bub b { display: block; font-family: var(--display); letter-spacing: .04em; }
+.peek-finds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.peek-finds > div { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 8px 4px; }
+.peek-finds b { font-size: 12px; line-height: 1.2; }
+.peek-finds small { color: var(--sign); font-family: var(--mono); font-size: 11px; }
+.bagrow.peeking { opacity: .7; cursor: default; }

@@ -15,7 +15,7 @@ export interface PassInfo {
   stampTotal: number;
 }
 
-const CLASSES = [
+export const CLASSES = [
   { name: 'ECONOMY', back: [239, 132, 28], front: [255, 214, 140], hi: [255, 168, 72], ink: '#4a2410', water: '#ffe2c4', glBack: '#ef671c', glFront: '#ffc691' },
   { name: 'BUSINESS', back: [36, 78, 150], front: [140, 186, 255], hi: [86, 132, 214], ink: '#06132b', water: '#cfe0ff', glBack: '#2a5bb0', glFront: '#a9c9ff' },
   { name: 'FIRST', back: [194, 58, 90], front: [255, 217, 138], hi: [170, 52, 86], ink: '#2a0612', water: '#ffe6a8', glBack: '#b83052', glFront: '#ffd98a' },
@@ -87,11 +87,18 @@ function hash(s: string) {
   return h;
 }
 
+/** Seat and gate are fixed per account. */
+export function seatGate(account: string) {
+  const h = hash(account);
+  return { seat: `${1 + (h % 38)}${'ABCDEF'[(h >>> 8) % 6]}`, gate: String(1 + ((h >>> 12) % 24)).padStart(2, '0') };
+}
+
+/** The pass's printed texture as a data URL. */
+export const passTexture = (k: number) => texture(k);
+
 export function passHtml(p: PassInfo): string {
   const c = CLASSES[p.klass];
-  const h = hash(p.account);
-  const seat = `${1 + (h % 38)}${'ABCDEF'[(h >>> 8) % 6]}`;
-  const gate = String(1 + ((h >>> 12) % 24)).padStart(2, '0');
+  const { seat, gate } = seatGate(p.account);
   const name = esc(p.name.toUpperCase());
   const size = name.length > 12 ? 24 : name.length > 9 ? 28 : name.length > 6 ? 34 : 40;
   return `
@@ -133,16 +140,4 @@ export function wirePass(el: HTMLElement | null) {
     el.style.transform = '';
     glare.style.background = 'transparent';
   });
-}
-
-export async function sharePass(p: PassInfo) {
-  const text = `I'm flying ${CLASSES[p.klass].name} on Final Call: ${fmt(p.netWorth)} net worth, ${p.bagsWon} bags won. Lost luggage auctions against AI rivals with real wallets, sealed on NEAR.`;
-  const url = location.origin;
-  try {
-    if (navigator.share) return void (await navigator.share({ title: 'Final Call', text, url }));
-    await navigator.clipboard.writeText(`${text} ${url}`);
-    return 'copied';
-  } catch {
-    return undefined;
-  }
 }

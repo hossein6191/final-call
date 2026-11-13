@@ -4,6 +4,7 @@ import { getVolume, setVolume, isMuted, toggleMute, unlock, sound } from '../aud
 import { replayTutorial } from './coach.ts';
 import { showHowto } from '../screens/howto.ts';
 import { briefingOff, setBriefing } from './briefing.ts';
+import { levelPicker, wireLevel } from './level.ts';
 
 const SPEAKER = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>`;
 const NOTE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
@@ -63,6 +64,7 @@ export function showSettings() {
       <div class="panel set">
         ${toggle('sbrief', 'Round briefing', !briefingOff(), 'The how-it-works box before each bag')}
       </div>
+      <div class="panel set"><span class="set-lbl">Rival difficulty</span>${levelPicker()}</div>
       <div class="panel set">
         <button class="set-row link" id="shelp"><span class="set-lbl">How to play</span><span>›</span></button>
         <button class="set-row link" id="stut"><span class="set-lbl">Replay the tutorial<small>The coach comes back on your next bag</small></span><span>›</span></button>
@@ -102,6 +104,7 @@ export function showSettings() {
   });
   sw('shap', (on) => setVolume({ haptics: on }));
   sw('sbrief', (on) => setBriefing(on));
+  wireLevel(el, () => sound.tap());
   const rng = (id: string, key: 'music' | 'sfx') => {
     const r = el.querySelector(`#${id}`) as HTMLInputElement;
     r.oninput = () => {

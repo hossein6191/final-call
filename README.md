@@ -15,7 +15,7 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
 ## What Final Call does about it
 
 - **Sealed bags.** Every bag's contents are hashed and committed on chain before it reaches the board. When the hammer falls the contract only accepts a reveal that matches the hash. Your browser re-checks it too.
-- **Rivals with real wallets.** Six AI bidders each own a NEAR account with an on-chain balance. They pay for what they win with their own key, sell, post escrowed buy orders, borrow from the House when broke, and can lose everything.
+- **Rivals with real wallets.** Six AI bidders each own a NEAR account with an on-chain balance. They pay for what they win with their own key, sell, post escrowed buy orders, borrow from the House when broke, and can lose everything. Before each bag, NEAR AI Cloud reads the X-ray, each rival's own appraisal and budget, and picks how hard that rival goes for it (pass, careful, fair, keen or chase) with a one-line private thought; code turns the stance into a bid cap that the rival's wallet still bounds.
 - **A shared market.** The Customs Dealer's prices live in the contract: each sale lowers that item's price for everyone, and it recovers over time.
 - **Back a broke rival.** A rival who runs out of miles closes up shop. Any player can reopen them with a stake of 100–2,000 miles; the contract then pays the backer 130% back, automatically, from half of everything that rival sells to the dealer. If nobody steps in for three hours, the House bails them out.
 - **No wallet, no gas.** You pick a nickname. Your browser makes a key, the contract creates your account holding only a key that can call the seven player methods, and every game transaction is signed in the background. Each bag you win comes with a little NEAR from the contract to pay for its own transactions, so you never see a gas prompt or run dry.
@@ -24,23 +24,27 @@ Loot games ask players to trust that the box wasn't rigged after they paid, and 
 
 1. Open https://final-call.up.railway.app on a phone or a computer (Chrome gets a full desktop layout), type a nickname, then tap **CHECK IN**.
    → In about 5 seconds your account (`<name>-xxxx.finalcall.testnet`) is created and the lobby opens: your boarding pass, today's missions, and the rivals on the floor. No wallet prompt appears.
-2. Tap **PLAY** on **Your welcome bag**, read the round briefing, and press **START** (or Space).
+2. Tap **PLAY** on **Your welcome bag**, read the round briefing, pick the rivals' difficulty (**Easy**, **Normal**, **Hard**), and press **START** (or Space).
    → The bag rolls onto the belt and the X-ray switches on. A coach walks you through the first bag step by step: drag across the bag, tap silhouettes to appraise them.
 3. When the belt stops, tap the big **BID** button a few times.
-   → Rivals answer with numbered paddles and speech lines; the ring around BID counts down; "GOING ONCE", "GOING TWICE" and a gavel follow when nobody bids.
+   → Rivals answer with numbered paddles and speech lines; the ring around BID counts down; "GOING ONCE", "GOING TWICE" and a gavel follow when nobody bids. From the second bag on, each rival shows the stance NEAR AI chose for it (for example **KEEN** or **PASS**) a few seconds into the scan.
 4. Win the bag.
-   → **YOURS!** The case opens, items pop out with rarity glows, and you tap the sealed pouches open. The **Proof** panel turns green line by line: the tag was sealed before bidding (tx), `sha256(contents + salt)` matches the tag (computed in your browser), the contract re-checked it on reveal (tx), and you paid with your own key (tx).
+   → **YOURS!** The case opens, items pop out with rarity glows, and you tap the sealed pouches open. The **Proof** panel turns green line by line: the tag was sealed before bidding (tx), `sha256(contents + salt)` matches the tag (computed in your browser), the contract re-checked it on reveal (tx), and you paid with your own key (tx). Above it, **What they were thinking · NEAR AI** shows each rival's private thought and the cap it led to.
 5. Tap **SELL ITEMS** and sell one.
    → Miles arrive with a transaction link, and that item's dealer price drops for everyone (open **My Bags** again to see the lower price and the demand arrow).
-6. Open **BOARD**.
+6. On the lobby, tap the share button under your boarding pass, then **POST ON X**.
+   → Your pass is printed as an image (name, class, net worth, rank). On a phone it goes to the share sheet with the image attached; on a computer the image downloads and a ready-made post opens on X.
+7. Open **FLIGHTS**, tap the locked **International** hall, then **BRIBE THE GUARD**.
+   → The guard jokes that it is a cheat and lets you look: that hall's top finds and the bags on its belt right now, look only. Bidding there still needs 3,000 net worth.
+8. Open **BOARD**.
    → Players and rivals ranked by net worth read live from the contract, plus a feed of wins, rival sales, buy orders, loans and bankruptcies with transaction links.
-7. On the Board, tap **SIMULATE A WEEK**.
+9. On the Board, tap **SIMULATE A WEEK**.
    → In under a second your browser runs 7 days of auctions (about 1,000 lots) between the six rivals and four bot players with the live rules, and draws everyone's net worth over the week: who went broke, the best flip, and how far dealer demand fell for popular items.
-8. On the lobby, tap a rival. If one is broke it shows **BACK ME**: pick a stake and tap **BACK**.
+10. On the lobby, tap a rival. If one is broke it shows **BACK ME**: pick a stake and tap **BACK**.
    → One transaction signed by your key moves the miles to the rival on chain (`invest`); they are back in the auctions at once, and **My Bags → Your stakes** shows what the contract still owes you. `node scripts/e2e-invest.ts` runs the same flow on testnet with throwaway accounts, including a repayment and the gas stipend.
-9. Open `#lot/<id>` for any lot (link in the Proof panel).
-   → The full tag check: the on-chain commitment, the revealed preimage, your browser's hash, the rivals' limits (computed from the X-ray only), and the NEAR AI signature on the rivals' lines.
-10. From a terminal, with no secrets: `npm run verify` (or `npm run verify -- <lot id>`).
+11. Open `#lot/<id>` for any lot (link in the Proof panel).
+   → The full tag check: the on-chain commitment, the revealed preimage, your browser's hash, the rivals' limits (computed from the X-ray only), the stance NEAR AI chose for each, and the NEAR AI signature on that response.
+12. From a terminal, with no secrets: `npm run verify` (or `npm run verify -- <lot id>`).
    → Reads the lot straight from the contract over public RPC, rebuilds the preimage, hashes it, and prints `match: YES` plus the contract's own `check_commitment` result.
 
 No setup is needed for any of this; the hosted game runs on NEAR testnet.
@@ -58,7 +62,7 @@ No setup is needed for any of this; the hosted game runs on NEAR testnet.
 | Gas stipend: closing a lot won by a player sends that player a little NEAR from the contract | `close_lot`, `GAS_STIPEND` |
 | The server holds no full-access key: three House function-call keys limited to House methods; one scoped key per rival | `scripts/setup-testnet.ts`, `server/chain.ts` |
 | Players sign their own transactions in the browser (payments, sales, order fills) | `web/src/wallet.ts`, `shared/near-send.ts` |
-| Rival lines from NEAR AI Cloud (TEE model); the server checks the response signature and links NEAR AI's verifier | `server/ai.ts` |
+| Rival decisions and lines from NEAR AI Cloud (TEE model): one call per bag returns each rival's stance, thought and lines; the server checks the response signature and links NEAR AI's verifier | `server/ai.ts`, `applyMinds` in `server/auction.ts` |
 
 ## What makes an auction feel like an auction
 
@@ -71,7 +75,7 @@ No setup is needed for any of this; the hosted game runs on NEAR testnet.
 ## What is on chain and what is not
 
 - On chain: balances, items, every lot's commitment and reveal, who won and what they paid, dealer prices and demand, buy orders and escrow, loans and debt.
-- Not on chain: the live bid-by-bid auction runs on the game server (bids are free and fast); only the result settles. The rivals' bidding is deterministic code in `server/rivals.ts` and `server/auction.ts`, fed only the public X-ray manifest. NEAR AI writes what they say, never what they bid.
+- Not on chain: the live bid-by-bid auction runs on the game server (bids are free and fast); only the result settles. Each rival's appraisal is code in `server/rivals.ts`, fed only the public X-ray manifest. NEAR AI then picks the rival's stance on the bag (it moves the cap between 0.6× and 1.25× of that appraisal) and writes what they say; the bid-by-bid play and the wallet limits stay in code (`server/auction.ts`). If NEAR AI is slow or down, rivals bid on their appraisal alone and use scripted lines.
 - Trust you still give the server: it chooses who won and at what price when it closes a lot. It cannot take your miles: `pay_lot` must be signed by the winner.
 
 ## Run it yourself

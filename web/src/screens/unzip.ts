@@ -51,6 +51,21 @@ export async function loadDemand(): Promise<Map<string, number>> {
   return new Map(m.market.map((r: any) => [r.item_id, r.demand_bp]));
 }
 
+const STANCE_LABEL: Record<string, string> = { pass: 'PASS', careful: 'CAREFUL', fair: 'FAIR', keen: 'KEEN', chase: 'CHASE' };
+
+/** What each rival decided before bidding, as NEAR AI wrote it, next to the cap it led to. */
+function minds(m: any) {
+  const list = (m.rivals ?? []).filter((r: any) => r.thought);
+  if (!list.length) return '';
+  return `<div class="panel minds"><div class="section-title" style="margin:0">WHAT THEY WERE THINKING · NEAR AI</div>
+    ${list
+      .map((r: any) => {
+        const def = state.cfg!.rivals.find((d) => d.account === r.account);
+        return `<div class="mind"><b style="color:${def?.color ?? '#fff'}">${esc(r.name)}</b><span class="stance s-${esc(r.stance)}">${STANCE_LABEL[r.stance] ?? ''}</span><i>“${esc(r.thought)}”</i><small>would go to ${fmt(r.max)} MI</small></div>`;
+      })
+      .join('')}</div>`;
+}
+
 export function showSold(m: any) {
   const won = m.winner === m.me;
   const items: BagItem[] = m.items;
@@ -71,6 +86,7 @@ export function showSold(m: any) {
       <div class="items" id="items"></div>
       ${won ? `<button class="btn" id="openall" hidden>OPEN ALL POUCHES</button>` : ''}
       <div id="summary" class="result-line"></div>
+      ${minds(m)}
       <div class="panel verify" id="verify">
         <div class="section-title" style="margin:0">PROOF</div>
         <div class="line"><i>🔒</i><span>Tag sealed on NEAR before bidding opened · ${m.sealedTx ? txLink(m.sealedTx) : '…'}</span></div>

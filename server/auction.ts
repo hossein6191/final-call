@@ -5,13 +5,17 @@ import { AUCTION, increment, itemValue, parseItemToken, publicEstimate, type Man
 import { ITEM_BY_ID } from '../shared/catalog.ts';
 import { getBag, setBag, addFeed, rivalryOf, bumpRivalry, type BagRow } from './db.ts';
 import { house, panicMessage, rival as rivalTx, txUrl, view } from './chain.ts';
-import { voiceRivals, scriptedLines, type Voiced } from './ai.ts';
+import { voiceRivals, scriptedLines, STANCES, type Voiced, type Mind, type Brief } from './ai.ts';
 import { Voice, type Moment } from './banter.ts';
 import { planFor, rivalWon, freeMiles, type RivalState } from './rivals.ts';
 
 // 1.2 s for the bag to roll into the X-ray tunnel, then 6 s of scanning.
 export const ARRIVE_MS = 1200;
 export const SCAN_MS = ARRIVE_MS + 6000;
+
+/** Difficulty the player picked: scales every rival's cap on the bag. */
+export const LEVELS = { easy: 0.82, normal: 1, hard: 1.15 } as const;
+export type Level = keyof typeof LEVELS;
 const TICK_MS = 100;
 
 export type Send = (msg: object) => void;
@@ -30,6 +34,11 @@ interface Seat {
   twitched: boolean;
   grudge: number; // bags this player has taken off this rival
   voice?: Voice;
+  /** Cap from the rival's own appraisal, before NEAR AI picks a stance. */
+  baseMax?: number;
+  /** Most the rival may commit to this bag, from its wallet. */
+  budget?: number;
+  mind?: Mind;
 }
 
 export interface AuctionResult {
@@ -64,6 +73,7 @@ export class Auction {
   private timer: NodeJS.Timeout | null = null;
   private playerMiles: number;
   private tutorial = false;
+  private level: Level = 'normal';
   private seenItem = '';
   private saidHeat = false;
   private saidDuel = false;
@@ -73,7 +83,7 @@ export class Auction {
 
   constructor(
     bag: BagRow,
-    player: { account: string; nickname: string; miles: number },
+    player: { account: string; nickname: string; miles: number; level?: Level },
     lineup: RivalState[],
     send: Send,
     onDone: (r: AuctionResult) => void,
@@ -87,15 +97,18 @@ export class Auction {
     this.seats = [this.player];
     const tutorial = Boolean(bag.reserved_for);
     this.tutorial = tutorial;
+    this.level = player.level && Object.hasOwn(LEVELS, player.level) ? player.level : 'normal';
     for (const r of tutorial ? lineup.slice(0, 2) : lineup) {
+      const budget = Math.floor(freeMiles(r) * Math.min(0.85, r.def.walletShare * 1.5));
       const plan = planFor(r, this.manifest, bag.tier);
       // The first bag teaches the payoff: two rivals who give up around half its value.
       if (tutorial) plan.max = Math.min(plan.max, Math.floor((publicEstimate(this.manifest, bag.tier) * 0.3) / 10) * 10);
       // Grudges: a rival you keep beating pushes 10% harder against you.
       const mem = rivalryOf(player.account, r.account);
       if (!tutorial && mem.player_wins >= 2) plan.max = Math.floor((plan.max * 1.1) / 10) * 10;
+      if (!tutorial) plan.max = Math.min(budget, Math.floor((plan.max * LEVELS[this.level]) / 10) * 10);
       r.committed += plan.max;
-      this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: mem.player_wins });
+      this.seats.push({ id: r.account, name: r.def.name, rival: r, max: plan.max, estimate: plan.estimate, folded: false, bids: 0, planAt: null, planJump: false, jumped: false, twitched: false, grudge: mem.player_wins, baseMax: plan.max, budget });
     }
     this.voiced = { source: 'scripted', lines: scriptedLines(lineup.map((r) => r.def), player.nickname) };
     for (const s of this.rivals) s.voice = new Voice(s.rival!.def, this.voiced.lines[s.rival!.def.sub]);
@@ -124,9 +137,13 @@ export class Auction {
       })
       .filter(Boolean)
       .join('; ');
-    voiceRivals(lineup, xrayText(this.manifest), this.player.name, memory).then((v) => {
+    const briefs: Record<string, Brief> = Object.fromEntries(
+      this.rivals.map((s) => [s.rival!.def.sub, { estimate: s.estimate, budget: s.budget ?? s.max, loves: s.rival!.def.loves }]),
+    );
+    voiceRivals(lineup, xrayText(this.manifest), this.player.name, memory, briefs).then((v) => {
       this.voiced = v;
       for (const s of this.rivals) s.voice?.setAi(v.lines[s.rival!.def.sub]);
+      this.applyMinds(v.minds);
       v.verification?.then((ver) => {
         setBag(this.bag.id, { ai: JSON.stringify({ source: v.source, completionId: v.completionId, verification: ver, error: v.error ?? null }) });
         if (ver) this.send({ type: 'ai:verified', lotId: this.bag.id, ok: ver.ok, verifyUrl: ver.verifyUrl, signingAddress: ver.signingAddress });
@@ -135,7 +152,7 @@ export class Auction {
       this.send({ type: 'ai:voices', source: v.source });
     });
     setBag(this.bag.id, {
-      rivals: JSON.stringify(this.rivals.map((s) => ({ account: s.id, name: s.name, estimate: s.estimate, max: s.max }))),
+      rivals: JSON.stringify(this.rivalsRecord()),
     });
     this.send({
       type: 'auction:start',
@@ -152,6 +169,7 @@ export class Auction {
       rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, sub: s.rival!.def.sub, color: s.rival!.def.color, title: s.rival!.def.title, miles: s.rival!.miles, grudge: s.grudge })),
       you: { miles: this.playerMiles },
       tutorial: Boolean(this.bag.reserved_for),
+      level: this.tutorial ? 'normal' : this.level,
     });
     setTimeout(() => this.goLive(), this.scanMs());
   }
@@ -220,6 +238,29 @@ export class Auction {
   }
 
   /** A first bag gets twice the scan time: the coach is teaching dragging and tapping. */
+  /** NEAR AI's stance moves each rival's cap; the wallet budget still bounds it. */
+  private applyMinds(minds?: Record<string, Mind>) {
+    if (!minds || this.phase === 'done' || this.tutorial) return;
+    const out: { account: string; sub: string; stance: string }[] = [];
+    for (const s of this.rivals) {
+      const m = minds[s.rival!.def.sub];
+      if (!m || s.folded) continue;
+      const step = s.baseMax! >= 1000 ? 50 : 10;
+      const next = Math.max(0, Math.floor(Math.min(s.baseMax! * STANCES[m.stance], s.budget ?? s.baseMax!) / step) * step);
+      s.rival!.committed += next - s.max;
+      s.max = next;
+      s.mind = m;
+      out.push({ account: s.id, sub: s.rival!.def.sub, stance: m.stance });
+    }
+    if (!out.length) return;
+    setBag(this.bag.id, { rivals: JSON.stringify(this.rivalsRecord()) });
+    this.send({ type: 'ai:minds', minds: out });
+  }
+
+  private rivalsRecord() {
+    return this.rivals.map((s) => ({ account: s.id, name: s.name, estimate: s.estimate, max: s.max, folded: s.folded, stance: s.mind?.stance ?? null, thought: s.mind?.thought ?? null }));
+  }
+
   private scanMs() {
     return this.tutorial ? ARRIVE_MS + 12000 : SCAN_MS;
   }
@@ -368,7 +409,7 @@ export class Auction {
       tokens: items,
       salt: this.bag.salt,
       commitment: this.bag.commitment,
-      rivals: this.rivals.map((s) => ({ account: s.id, name: s.name, estimate: s.estimate, max: s.max, folded: s.folded })),
+      rivals: this.rivalsRecord(),
     });
     for (const s of this.rivals) {
       if (winner === this.player) bumpRivalry(this.player.id, s.id, true);

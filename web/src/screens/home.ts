@@ -7,7 +7,9 @@ import { TERMINALS } from '../../../shared/rules.ts';
 import { ITEM_BY_ID } from '../../../shared/catalog.ts';
 import { AVATARS } from '../avatars.ts';
 import { sound } from '../audio.ts';
-import { passHtml, wirePass, sharePass, livenPass, type PassInfo } from '../ui/pass.ts';
+import { passHtml, wirePass, livenPass, type PassInfo } from '../ui/pass.ts';
+import { showShareSheet } from '../ui/passcard.ts';
+import { startCameos } from '../ui/cameo.ts';
 import { missions, stampCount, stamps, STAMPS, checkUnlocks, worthHistory, recordWorth, track } from '../ui/progress.ts';
 import { worthCardHtml, wireWorth } from '../ui/chart.ts';
 import { ICON, nextTip, hourglassSvg } from '../ui/bits.ts';
@@ -82,9 +84,9 @@ export function home(root: HTMLElement) {
       </div>`;
     wirePass(root.querySelector('.pass'));
     livenPass(root.querySelector('.pass'), klass);
-    ($('#share', root) as HTMLButtonElement).onclick = async () => {
+    ($('#share', root) as HTMLButtonElement).onclick = () => {
       sound.tap();
-      if (info && (await sharePass(info)) === 'copied') toast('Copied your pass to the clipboard. Paste it anywhere.');
+      if (info) void showShareSheet(info);
     };
     checkUnlocks(nw, TERMINALS.map((t) => t.unlockNetWorth));
     if (p) {
@@ -204,8 +206,14 @@ export function home(root: HTMLElement) {
     const el = root.querySelector('#tip span');
     if (el) el.textContent = nextTip();
   }, 9000);
+  const stopCameos = startCameos(() =>
+    info && state.profile
+      ? { player: info.name, worth: info.netWorth, bags: info.bagsWon, next: TERMINALS.find((x) => x.unlockNetWorth > info!.netWorth)?.name }
+      : null,
+  );
   return () => {
     alive = false;
+    stopCameos();
     clearInterval(t);
     clearInterval(c);
     clearInterval(tip);

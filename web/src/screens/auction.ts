@@ -10,6 +10,7 @@ import { coach, coachOff, coachActive } from '../ui/coach.ts';
 import { track, seen } from '../ui/progress.ts';
 import { nextTip, hourglassSvg } from '../ui/bits.ts';
 import { briefing } from '../ui/briefing.ts';
+import { getLevel } from '../ui/level.ts';
 
 interface Slot {
   m: ManifestSlot;
@@ -36,7 +37,7 @@ export function auction(root: HTMLElement, lotId: number) {
   root.innerHTML = `
   <div class="auction" id="auctionRoot">
     <div class="vignette" id="vignette"></div>
-    <div class="lot-head"><b id="flight">Boarding…</b><span id="origin"></span><span class="grow"></span><span id="aichip"></span></div>
+    <div class="lot-head"><b id="flight">Boarding…</b><span id="origin"></span><span class="grow"></span><span id="lvchip"></span><span id="aichip"></span></div>
     <div class="belt" id="belt">
       <canvas id="xray"></canvas>
       <div class="scanbar"><i id="scanfill" style="width:0%"></i></div>
@@ -596,6 +597,7 @@ export function auction(root: HTMLElement, lotId: number) {
     if (m.lotId !== undefined && m.lotId !== lotId && m.type.startsWith('auction')) return;
     switch (m.type) {
       case 'auction:start': {
+        if (m.level && m.level !== 'normal') $('#lvchip', root).innerHTML = `<span class="chip lv-${esc(m.level)}">${esc(String(m.level).toUpperCase())}</span>`;
         startMsg = m;
         tier = m.tier;
         manifest = m.manifest;
@@ -785,6 +787,17 @@ export function auction(root: HTMLElement, lotId: number) {
       case 'ai:voices':
         $('#aichip', root).innerHTML = m.source === 'near-ai' ? `<span class="chip ai">${BOT}voices: NEAR AI</span>` : `<span class="chip ai">${BOT}voices: scripted</span>`;
         break;
+      case 'ai:minds':
+        for (const d of m.minds as { account: string; stance: string }[]) {
+          const card = rivalCards.get(d.account);
+          if (!card) continue;
+          card.querySelector('.stance')?.remove();
+          card.insertAdjacentHTML('beforeend', `<div class="stance s-${esc(d.stance)}" title="Stance chosen by NEAR AI">${esc(d.stance.toUpperCase())}</div>`);
+          if (d.stance === 'chase' || d.stance === 'keen') mood(d.account, 'happy', 1600);
+          else if (d.stance === 'pass') mood(d.account, 'sad', 1600);
+          else mood(d.account, 'think', 1600);
+        }
+        break;
       case 'ai:verified':
         $('#aichip', root).innerHTML = m.ok
           ? `<a class="chip ok ai" href="${esc(m.verifyUrl)}" target="_blank" rel="noopener">${BOT}✓ signed by NEAR AI TEE</a>`
@@ -830,7 +843,7 @@ export function auction(root: HTMLElement, lotId: number) {
   // How the round works, then the bag rolls in.
   let left = false;
   void briefing($('#auctionRoot', root), lotId).then(() => {
-    if (!left) void live.send({ type: 'enter', lotId });
+    if (!left) void live.send({ type: 'enter', lotId, level: getLevel() });
   });
 
   return () => {
