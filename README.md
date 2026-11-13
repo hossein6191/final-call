@@ -5,7 +5,7 @@ Bid on unclaimed airport luggage against AI rivals who carry real wallets. Scan 
 Built for **NEAR HACKATHON 2026**, track **Games With Real Economies** (also entered in **AI Swarms**).
 
 - Play: https://final-call.up.railway.app (phone or computer)
-- Demo video: `<X post URL>`
+- Demo video: https://x.com/Hellishnum1/status/2121307936764919930
 - Contract: [`finalcall.testnet`](https://testnet.nearblocks.io/address/finalcall.testnet) (NEAR testnet)
 
 ## The problem
