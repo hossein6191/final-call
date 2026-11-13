@@ -268,6 +268,12 @@ export function brokeSheet() {
 }
 
 /** A rival's profile: who they are, what they love, their real wallet. */
+const TRICKS: Record<string, string> = {
+  dash: 'Lights out. Once per bag he can black out your screen for 2 seconds, right after his own bid.',
+  bigsal: 'Make it rain. When you lead, he can answer with one huge jump bid.',
+  odo: 'Lecture. He can fog your X-ray during the scan while he talks.',
+};
+
 export function rivalSheet(account: string, board: any) {
   const def = state.cfg!.rivals.find((r) => r.account === account);
   const p = board?.people?.find((x: any) => x.account === account);
@@ -284,11 +290,13 @@ export function rivalSheet(account: string, board: any) {
       <div class="panel rs-grid">
         <div><small>MILES</small><b>${p ? fmt(p.miles ?? 0) : '—'}</b></div>
         <div><small>NET WORTH</small><b>${p ? fmt(p.netWorth) : '—'}</b></div>
-        <div><small>STATUS</small><b class="${p?.grounded ? 'trend-down' : 'trend-up'}">${p?.grounded ? 'GROUNDED' : 'BIDDING'}</b></div>
+        <div><small>STATUS</small><b class="${p?.banned || p?.grounded ? 'trend-down' : 'trend-up'}">${p?.banned ? 'BANNED' : p?.grounded ? 'GROUNDED' : 'BIDDING'}</b></div>
       </div>
       ${p && p.miles < 100 ? backPanel(def.name, p) : '<div class="panel small" id="stakeinfo">Backers: …</div>'}
       ${def.loves?.length ? `<div class="panel small"><b>Loves:</b> ${def.loves.map((c) => esc(c)).join(', ')}. Sell them these and they pay over the dealer price.</div>` : ''}
       <div class="panel small">How to read them: <span class="muted">${esc(styleTip(def.style))}</span></div>
+      ${TRICKS[def.sub] ? `<div class="panel small">⚡ <b>Trick:</b> ${esc(TRICKS[def.sub])}</div>` : ''}
+      ${p?.banned ? `<div class="panel small">🚩 Caught peeking inside a bag. Banned from the floor until ${new Date(p.bannedUntil).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}.</div>` : ''}
       <div class="small muted" style="text-align:center">A real NEAR account with its own key · ${accLink(account)}</div>
     </div>`;
   document.body.appendChild(el);
